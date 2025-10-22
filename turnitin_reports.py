@@ -277,6 +277,97 @@ def download_reports(page, chat_id, bot, original_filename=None):
     
     return submission_info
 
+
+def send_reports_to_user(chat_id, bot, sim_filename, ai_filename, original_filename=None):
+    """Send downloaded reports directly to Telegram as files.
+    
+    Args:
+        chat_id: Telegram chat ID to send reports to
+        bot: Telegram bot instance
+        sim_filename: Path to similarity report PDF file
+        ai_filename: Path to AI writing report PDF file
+        original_filename: Optional original document filename for reference
+        
+    Returns:
+        Number of reports successfully sent
+    """
+    try:
+        reports_sent = 0
+        
+        if sim_filename and os.path.exists(sim_filename):
+            log(f"Sending Similarity Report to Telegram: {sim_filename}")
+            try:
+                with open(sim_filename, 'rb') as f:
+                    bot.send_document(
+                        chat_id,
+                        f,
+                        caption="📊 <b>Similarity Report</b>",
+                        parse_mode='HTML'
+                    )
+                reports_sent += 1
+                log("Similarity Report sent successfully to Telegram")
+            except Exception as e:
+                log(f"Error sending Similarity Report: {e}")
+                bot.send_message(chat_id, f"❌ Error sending Similarity Report: {e}")
+        
+        if ai_filename and os.path.exists(ai_filename):
+            log(f"Sending AI Writing Report to Telegram: {ai_filename}")
+            try:
+                with open(ai_filename, 'rb') as f:
+                    bot.send_document(
+                        chat_id,
+                        f,
+                        caption="🤖 <b>AI Writing Report</b>",
+                        parse_mode='HTML'
+                    )
+                reports_sent += 1
+                log("AI Writing Report sent successfully to Telegram")
+            except Exception as e:
+                log(f"Error sending AI Writing Report: {e}")
+                bot.send_message(chat_id, f"❌ Error sending AI Writing Report: {e}")
+        
+        # Send summary message
+        if reports_sent > 0:
+            summary_message = "✅ <b>Reports Ready!</b>\n\n"
+            
+            if original_filename:
+                summary_message += f"📁 <b>File:</b> {original_filename}\n\n"
+            
+            summary_message += f"📊 <b>Reports Sent:</b> {reports_sent}\n\n"
+            summary_message += "📄 Similarity Report\n"
+            summary_message += "🤖 AI Writing Report\n\n"
+            summary_message += "💾 All reports are ready in Telegram!"
+            
+            bot.send_message(chat_id, summary_message)
+            
+        return reports_sent
+    except Exception as e:
+        log(f"Error in report delivery: {e}")
+        bot.send_message(chat_id, f"⚠️ Error delivering reports: {e}")
+        return 0
+
+
+def download_reports_with_retry(page, chat_id, bot, original_filename=None, retries=3, retry_delay=5):
+    """Compatibility wrapper expected by older code.
+
+    Calls `download_reports` and will retry up to `retries` times if it raises an exception.
+    Keeps the same return shape as `download_reports`.
+    """
+    last_exc = None
+    for attempt in range(1, retries + 1):
+        try:
+            return download_reports(page, chat_id, bot, original_filename=original_filename)
+        except Exception as e:
+            last_exc = e
+            log(f"download_reports_with_retry: attempt {attempt} failed: {e}")
+            if attempt < retries:
+                time.sleep(retry_delay)
+
+    # If we get here, all retries failed — raise the last exception to make failures visible
+    log(f"download_reports_with_retry: all {retries} attempts failed: {last_exc}")
+    raise last_exc
+
+
 def cleanup_files(sim_filename, ai_filename, file_path):
     """Clean up downloaded and uploaded files"""
     try:
