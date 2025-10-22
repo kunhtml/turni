@@ -348,6 +348,7 @@ def check_and_perform_login():
             try:
                 log(f"Trying email selector: {selector}")
                 page.wait_for_selector(selector, timeout=20000)
+                log(f"📧 Filling email: {TURNITIN_EMAIL}")
                 page.fill(selector, TURNITIN_EMAIL)
                 log(f"Email filled successfully with selector: {selector}")
                 email_filled = True
@@ -381,6 +382,7 @@ def check_and_perform_login():
         for selector in password_selectors:
             try:
                 log(f"Trying password selector: {selector}")
+                log(f"🔑 Filling password: {TURNITIN_PASSWORD}")
                 page.fill(selector, TURNITIN_PASSWORD)
                 log(f"Password filled successfully with selector: {selector}")
                 password_filled = True
