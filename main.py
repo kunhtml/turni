@@ -28,8 +28,12 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode='HTML')
 # Processing queue and worker threads
 processing_queue = queue.Queue()
 worker_threads = []
-MAX_WORKERS = 3  # Maximum 3 concurrent workers
+MAX_WORKERS = 3  # 3 workers with sequential login to avoid concurrent login issues
 MIN_QUEUE_SIZE_FOR_SCALING = 2  # Start additional workers when queue has 2+ items
+
+# Login synchronization - ensures workers login one at a time
+login_lock = threading.Lock()
+worker_login_events = {}  # Track when each worker completes login
 
 # Subscription plans
 MONTHLY_PLANS = {
@@ -182,22 +186,38 @@ def process_documents_worker(worker_id):
     """Worker thread to process documents from queue"""
     log(f"Worker {worker_id} started")
     
+    # Wait for previous worker to complete login before starting
+    if worker_id > 1:
+        previous_worker = worker_id - 1
+        if previous_worker in worker_login_events:
+            log(f"[Worker-{worker_id}] Waiting for Worker-{previous_worker} to complete login...")
+            worker_login_events[previous_worker].wait(timeout=120)  # Wait max 2 minutes
+            log(f"[Worker-{worker_id}] Worker-{previous_worker} login completed, proceeding...")
+        time.sleep(5)  # Additional 5s delay between workers
+    
+    # Create login event for this worker
+    worker_login_events[worker_id] = threading.Event()
+    
     # Pre-login to Turnitin when worker starts - don't wait for first document
     log(f"[Worker-{worker_id}] Initializing browser and logging in...")
     try:
-        from turnitin_auth import get_or_create_browser_session, check_and_perform_login
-        
-        # Initialize browser session for this worker thread
-        page = get_or_create_browser_session()
-        
-        # Now try login
-        login_success = check_and_perform_login()
-        if login_success:
-            log(f"[Worker-{worker_id}] ✅ Pre-login successful - ready to process documents")
-        else:
-            log(f"[Worker-{worker_id}] ⚠️ Pre-login failed, will retry on first document")
+        with login_lock:  # Acquire lock to ensure sequential login
+            from turnitin_auth import get_or_create_browser_session, check_and_perform_login
+            
+            # Initialize browser session for this worker thread
+            page = get_or_create_browser_session()
+            
+            # Now try login
+            login_success = check_and_perform_login()
+            if login_success:
+                log(f"[Worker-{worker_id}] ✅ Pre-login successful - ready to process documents")
+            else:
+                log(f"[Worker-{worker_id}] ⚠️ Pre-login failed, will retry on first document")
     except Exception as login_error:
         log(f"[Worker-{worker_id}] Pre-login error: {login_error} - will retry on first document")
+    finally:
+        # Signal that this worker has completed login attempt
+        worker_login_events[worker_id].set()
     
     while True:
         try:
