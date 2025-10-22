@@ -28,7 +28,7 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode='HTML')
 # Processing queue and worker threads
 processing_queue = queue.Queue()
 worker_threads = []
-MAX_WORKERS = 1  # Maximum 1 concurrent worker
+MAX_WORKERS = 3  # Maximum 1 concurrent worker
 MIN_QUEUE_SIZE_FOR_SCALING = 2  # Start additional workers when queue has 2+ items
 
 # Subscription plans

@@ -76,7 +76,14 @@ def process_turnitin(file_path: str, chat_id: int, bot):
 
         # Download reports (handles downloading and sending to Telegram)
         log("Downloading reports...")
-        submission_info = download_reports_with_retry(page1, chat_id, bot, original_filename)
+        try:
+            submission_info = download_reports_with_retry(page1, chat_id, bot, original_filename)
+        except TypeError as e:
+            if "'dict' object has no attribute" in str(e) or "has no attribute 'url'" in str(e):
+                log(f"Page object error: {e} - this means find_submission returned wrong type")
+                bot.send_message(chat_id, "❌ Internal error: submission page error")
+                return
+            raise
         
         if not submission_info or not submission_info.get('reports_available'):
             log("Download failed, user will retry later")

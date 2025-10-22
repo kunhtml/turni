@@ -82,10 +82,13 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                                     link.click()
                                     log(f"[{worker_name}] Clicked submission link")
                                     time.sleep(3)
-                                    return {
-                                        'found': True,
-                                        'submission_title': submission_title
-                                    }
+                                    
+                                    # Wait for reports page to load
+                                    page.wait_for_load_state("networkidle", timeout=30000)
+                                    log(f"[{worker_name}] Submission page loaded, returning page object")
+                                    
+                                    # Return the page object so caller can use it
+                                    return page
                             except Exception as click_error:
                                 log(f"[{worker_name}] Error clicking submission: {click_error}")
                 except Exception as cell_error:
@@ -94,7 +97,7 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
             log(f"[{worker_name}] Error processing rows: {rows_error}")
         
         log(f"[{worker_name}] Submission not found in inbox")
-        return {'found': False, 'error': 'Submission not found'}
+        return None
 
     except Exception as e:
         log(f"[{worker_name}] Error finding submission: {e}")
@@ -105,6 +108,10 @@ def download_reports(page, chat_id, bot, original_filename=None):
     import time
     import random
     from datetime import datetime
+    
+    # Validate page object
+    if not hasattr(page, 'url') or not hasattr(page, 'wait_for_selector'):
+        raise TypeError(f"Expected Playwright page object, got {type(page).__name__}: {page}")
     
     sim_filename = None
     ai_filename = None
