@@ -45,7 +45,18 @@ def process_turnitin(file_path: str, chat_id: int, bot):
         log(f"File verified: {file_path} (Size: {os.path.getsize(file_path)} bytes)")
 
         # Get or create browser session (persistent)
-        page = get_session_page()
+        from turnitin_auth import get_thread_browser_session
+        browser_session = get_thread_browser_session()
+        session_page = browser_session['page']
+        
+        # Check if we're stuck on login page and need to re-login
+        current_url = session_page.url
+        if 'login_page.asp' in current_url:
+            log("Browser stuck on login page, attempting re-login...")
+            cleanup_browser_session()
+            page = get_session_page()
+        else:
+            page = session_page
         
         # Navigate to Quick Submit (no arguments needed)
         navigate_to_quick_submit()
