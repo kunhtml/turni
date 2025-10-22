@@ -445,9 +445,15 @@ def check_and_perform_login():
             log("Could not find or click login button")
             return False
         
-        # Wait for login to complete with longer timeout
-        log("Waiting for login to complete...")
-        page.wait_for_timeout(15000)
+        # Wait for login to complete - wait for navigation
+        log("Waiting for login to complete and page to load...")
+        try:
+            page.wait_for_load_state('networkidle', timeout=60000)
+            log("Page fully loaded after login")
+        except Exception as load_err:
+            log(f"Page load timeout (continuing anyway): {load_err}")
+        
+        page.wait_for_timeout(3000)  # Extra wait for any redirects
         
         # Debug: Check what page we're on after login
         try:
@@ -506,16 +512,68 @@ def check_and_perform_login():
         # Verify login success
         try:
             page.wait_for_selector('a.sn_quick_submit', timeout=30000)
-            log("Login successful - Quick Submit found")
+            log("✅ Quick Submit link found - login successful!")
             save_cookies()
             return True
         except:
-            log("Login verification failed - Quick Submit not found")
-            # Check if we're on an error page
-            current_url = page.url
-            if "error" in current_url.lower() or "login" in current_url.lower():
-                log("Still on login/error page after login attempt")
-            return False
+            log("⚠️ Quick Submit link not found immediately, checking if on home page...")
+            
+            # Check if we're on home/dashboard page (instructor account after login)
+            try:
+                after_login_url = page.url
+                page_content = page.content().lower()
+                
+                # If still on login page, login failed
+                if "login_page.asp" in after_login_url:
+                    log("❌ Still on login page - login failed")
+                    return False
+                
+                # If on home page, navigate to Quick Submit
+                if "home" in after_login_url or "t_assignments" in after_login_url or page_content.count("quick submit") > 0:
+                    log("On home/assignment page, looking for Quick Submit link...")
+                    
+                    quick_submit_selectors = [
+                        'a.sn_quick_submit',
+                        'a[href*="quicksubmit"]',
+                        'li:has-text("Quick Submit") a',
+                        'a:has-text("Quick Submit")',
+                    ]
+                    
+                    for selector in quick_submit_selectors:
+                        try:
+                            log(f"Trying selector: {selector}")
+                            quick_submit = page.query_selector(selector)
+                            if quick_submit:
+                                log(f"Found Quick Submit with selector: {selector}")
+                                # Wait for page stability
+                                page.wait_for_load_state('networkidle', timeout=30000)
+                                page.wait_for_timeout(2000)
+                                quick_submit.click()
+                                log("✅ Clicked Quick Submit link")
+                                page.wait_for_load_state('networkidle', timeout=30000)
+                                save_cookies()
+                                return True
+                        except Exception as e:
+                            log(f"Selector {selector} failed: {e}")
+                            continue
+                    
+                    log("Could not find Quick Submit link, but may still be logged in")
+                    save_cookies()
+                    return True
+                
+            except Exception as e:
+                log(f"Error navigating to Quick Submit: {e}")
+            
+            # If we get here, try one more time with a longer wait
+            try:
+                log("Retrying Quick Submit search with longer timeout...")
+                page.wait_for_selector('a.sn_quick_submit', timeout=60000)
+                log("✅ Quick Submit found on retry")
+                save_cookies()
+                return True
+            except:
+                log("❌ Quick Submit not found - login may have failed")
+                return False
             
     except Exception as e:
         log(f"Login process failed: {e}")
