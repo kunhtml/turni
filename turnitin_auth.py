@@ -471,22 +471,7 @@ def check_and_perform_login():
             except Exception as html_err:
                 log(f"Could not save HTML: {html_err}")
             
-            # Check page content for error messages
-            page_content = page.content().lower()
-            
-            # Check for common error indicators
-            if "captcha" in page_content:
-                log("⚠️ CAPTCHA detected - manual intervention required")
-            elif "invalid" in page_content or "incorrect" in page_content:
-                log("⚠️ Invalid credentials or login error")
-            elif "blocked" in page_content or "denied" in page_content:
-                log("⚠️ Access blocked - IP/proxy may be blacklisted")
-            elif "two" in page_content and "factor" in page_content:
-                log("⚠️ Two-factor authentication required")
-            elif "error" in after_login_url.lower():
-                log(f"⚠️ Redirected to error page: {after_login_url}")
-            
-            # Check if still on login page
+            # Check if still on login page - most reliable indicator
             if "login_page.asp" in after_login_url:
                 log("⚠️ Still on login page - credentials may be incorrect")
                 # Extract any error messages from the page
