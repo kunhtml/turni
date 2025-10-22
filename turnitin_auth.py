@@ -16,6 +16,9 @@ TURNITIN_PASSWORD = os.getenv("TURNITIN_PASSWORD")
 # Webshare API configuration
 WEBSHARE_API_TOKEN = os.getenv("WEBSHARE_API_TOKEN", "")
 
+# Manual proxy configuration
+MANUAL_PROXY = os.getenv("MANUAL_PROXY", "")
+
 # Thread-local storage for browser sessions (each worker thread gets its own session)
 thread_local = threading.local()
 
@@ -133,6 +136,28 @@ def test_proxy_connection(proxy_info, session=None):
 
 def get_working_proxy():
     """Get a working proxy with rotation and testing"""
+    
+    # First, check for manual proxy configuration
+    if MANUAL_PROXY:
+        try:
+            # Parse manual proxy format: host:port:username:password
+            parts = MANUAL_PROXY.split(':')
+            if len(parts) == 4:
+                manual_proxy_info = {
+                    'proxy_address': parts[0],
+                    'port': parts[1],
+                    'username': parts[2],
+                    'password': parts[3],
+                    'country_code': 'Manual'
+                }
+                log(f"Using manual proxy: {manual_proxy_info['proxy_address']}:{manual_proxy_info['port']}")
+                return manual_proxy_info
+            else:
+                log(f"Invalid manual proxy format: {MANUAL_PROXY} (expected host:port:username:password)")
+        except Exception as e:
+            log(f"Error parsing manual proxy: {e}")
+    
+    # Fall back to Webshare proxies
     proxies = get_webshare_proxies()
     
     if not proxies:
@@ -348,7 +373,6 @@ def check_and_perform_login():
             try:
                 log(f"Trying email selector: {selector}")
                 page.wait_for_selector(selector, timeout=20000)
-                log(f"📧 Filling email: {TURNITIN_EMAIL}")
                 page.fill(selector, TURNITIN_EMAIL)
                 log(f"Email filled successfully with selector: {selector}")
                 email_filled = True
@@ -382,7 +406,6 @@ def check_and_perform_login():
         for selector in password_selectors:
             try:
                 log(f"Trying password selector: {selector}")
-                log(f"🔑 Filling password: {TURNITIN_PASSWORD}")
                 page.fill(selector, TURNITIN_PASSWORD)
                 log(f"Password filled successfully with selector: {selector}")
                 password_filled = True
