@@ -1,0 +1,80 @@
+# ============================================
+# SENSITIVE FILES - NEVER COMMIT
+# ============================================
+.env
+*.env
+!.env.example
+
+# Credentials & Session Data
+credentials.json
+secrets.json
+turnitin_session_cookies.json
+cookies.json
+token.pickle
+
+# ============================================
+# DATA FILES
+# ============================================
+subscriptions.json
+pending_requests.json
+processing_queue.json
+pending_retries_queue.json
+submission_history.json
+
+# ============================================
+# UPLOADS & DOWNLOADS
+# ============================================
+uploads/
+downloads/
+*.pdf
+*.doc
+*.docx
+*.txt
+
+# ============================================
+# PYTHON
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+*.egg-info/
+
+# ============================================
+# LOGS & DEBUG
+# ============================================
+*.log
+logs/
+debug_*.png
+debug_*.html
+
+# ============================================
+# OS SPECIFIC
+# ============================================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ============================================
+# IDE & EDITORS
+# ============================================
+.vscode/
+.idea/
+*.swp
+
+# ============================================
+# PLAYWRIGHT & BROWSER
+# ============================================
+.cache/
+playwright_temp/
+browser_data/
+
+# ============================================
+# BACKUP FILES
+# ============================================
+*.bak
+*.backup
+*.old
