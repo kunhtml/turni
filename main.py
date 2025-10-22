@@ -28,12 +28,8 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode='HTML')
 # Processing queue and worker threads
 processing_queue = queue.Queue()
 worker_threads = []
-MAX_WORKERS = 1  # 3 workers with sequential login to avoid concurrent login issues
+MAX_WORKERS = 1  # Maximum 1 concurrent worker
 MIN_QUEUE_SIZE_FOR_SCALING = 2  # Start additional workers when queue has 2+ items
-
-# Login synchronization - ensures workers login one at a time
-login_lock = threading.Lock()
-worker_login_events = {}  # Track when each worker completes login
 
 # Subscription plans
 MONTHLY_PLANS = {
@@ -186,38 +182,20 @@ def process_documents_worker(worker_id):
     """Worker thread to process documents from queue"""
     log(f"Worker {worker_id} started")
     
-    # Wait for previous worker to complete login before starting
-    if worker_id > 1:
-        previous_worker = worker_id - 1
-        if previous_worker in worker_login_events:
-            log(f"[Worker-{worker_id}] Waiting for Worker-{previous_worker} to complete login...")
-            worker_login_events[previous_worker].wait(timeout=120)  # Wait max 2 minutes
-            log(f"[Worker-{worker_id}] Worker-{previous_worker} login completed, proceeding...")
-        time.sleep(5)  # Additional 5s delay between workers
-    
-    # Create login event for this worker
-    worker_login_events[worker_id] = threading.Event()
-    
     # Pre-login to Turnitin when worker starts - don't wait for first document
     log(f"[Worker-{worker_id}] Initializing browser and logging in...")
     try:
-        with login_lock:  # Acquire lock to ensure sequential login
-            from turnitin_auth import get_or_create_browser_session, check_and_perform_login
-            
-            # Initialize browser session for this worker thread
-            page = get_or_create_browser_session()
-            
-            # Now try login
-            login_success = check_and_perform_login()
-            if login_success:
-                log(f"[Worker-{worker_id}] ✅ Pre-login successful - ready to process documents")
-            else:
-                log(f"[Worker-{worker_id}] ⚠️ Pre-login failed, will retry on first document")
+        from turnitin_auth import get_or_create_browser_session
+        
+        # Initialize browser session for this worker thread (includes login)
+        page = get_or_create_browser_session()
+        
+        if page:
+            log(f"[Worker-{worker_id}] ✅ Pre-login successful - ready to process documents")
+        else:
+            log(f"[Worker-{worker_id}] ⚠️ Pre-login failed, will retry on first document")
     except Exception as login_error:
         log(f"[Worker-{worker_id}] Pre-login error: {login_error} - will retry on first document")
-    finally:
-        # Signal that this worker has completed login attempt
-        worker_login_events[worker_id].set()
     
     while True:
         try:
@@ -353,9 +331,6 @@ def create_main_menu():
     """Create main menu keyboard"""
     markup = types.InlineKeyboardMarkup(row_width=2)
     
-    markup.add(
-        types.InlineKeyboardButton(" Document Based", callback_data="document_plans")
-    )
     markup.add(
         types.InlineKeyboardButton("📊 My Subscription", callback_data="my_subscription"),
         types.InlineKeyboardButton("📜 My History", callback_data="my_history")
@@ -1065,6 +1040,65 @@ This user doesn't have an active subscription."""
 <b>Status:</b> Unknown subscription type"""
     
     bot.send_message(message.chat.id, check_text)
+
+@bot.message_handler(commands=['stop'])
+def stop_subscription_command(message):
+    """Admin command to stop/cancel user subscription"""
+    if message.from_user.id not in ADMIN_TELEGRAM_IDS:
+        return
+    
+    try:
+        parts = message.text.split(' ')
+        target_user_id = int(parts[1])
+    except (IndexError, ValueError):
+        bot.reply_to(message, 
+            "❌ Usage: /stop <user_id>\n\n"
+            "Example: /stop 123456789\n"
+            "(Dừng gói cước cho user ID 123456789)")
+        return
+    
+    subscriptions = load_subscriptions()
+    user_id_str = str(target_user_id)
+    
+    if user_id_str not in subscriptions:
+        bot.reply_to(message, f"❌ User {target_user_id} không có gói cước nào")
+        return
+    
+    user_data = subscriptions[user_id_str]
+    
+    # Store old subscription info before deletion
+    old_sub_type = user_data.get("type", "unknown")
+    if old_sub_type == "time":
+        old_sub_info = f"Time-based ({user_data.get('duration_days', '?')} days)"
+    elif old_sub_type == "document":
+        old_sub_info = f"Document-based ({user_data.get('documents_remaining', '?')} docs remaining)"
+    else:
+        old_sub_info = user_data.get("plan_name", "Unknown plan")
+    
+    # Delete subscription
+    del subscriptions[user_id_str]
+    save_subscriptions(subscriptions)
+    
+    # Notify admin
+    admin_msg = f"""✅ <b>Subscription Stopped</b>
+
+<b>User ID:</b> {target_user_id}
+<b>Old Plan:</b> {old_sub_info}
+<b>Status:</b> Đã hủy bỏ"""
+    
+    bot.reply_to(message, admin_msg)
+    
+    # Try to notify user
+    try:
+        user_msg = f"""⚠️ <b>Your subscription has been stopped</b>
+
+Your access to document processing has been revoked.
+Contact admin for more information."""
+        bot.send_message(target_user_id, user_msg)
+    except:
+        log(f"Could not notify user {target_user_id}")
+    
+    log(f"Subscription stopped for user {target_user_id}. Old plan: {old_sub_info}")
 
 @bot.message_handler(func=lambda message: message.text and 'drive.google.com' in message.text)
 def handle_google_drive_link(message):
