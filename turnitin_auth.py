@@ -295,14 +295,36 @@ def get_or_create_browser_session():
             'ignore_https_errors': True
         }
         
-        # Load cookies if available
+        # Load cookies if available (but validate them first)
         cookies_path = "cookies.json"
+        should_load_cookies = False
+        
         if os.path.exists(cookies_path):
             try:
-                context_options['storage_state'] = cookies_path
-                log("Loading saved cookies")
-            except:
-                log("Could not load cookies, creating fresh session")
+                # Validate cookies have session tokens
+                import json
+                with open(cookies_path, 'r', encoding='utf-8') as f:
+                    cookie_data = json.load(f)
+                    cookies = cookie_data.get('cookies', [])
+                    
+                    # Check if we have important session cookies
+                    important_cookies = ['session-id', 't', 'apt.sid', 'cwr_s']
+                    has_important = any(c['name'] in important_cookies for c in cookies)
+                    
+                    # Check if cookies are not expired
+                    current_time = time.time()
+                    valid_cookies = [c for c in cookies if c.get('expires', -1) > current_time or c.get('expires', -1) == -1]
+                    
+                    if has_important and len(valid_cookies) > 0:
+                        context_options['storage_state'] = cookies_path
+                        should_load_cookies = True
+                        log(f"Loading saved cookies: {len(valid_cookies)}/{len(cookies)} valid")
+                    else:
+                        log(f"Cookies expired or missing session info (valid: {len(valid_cookies)}/{len(cookies)})")
+            except Exception as e:
+                log(f"Could not validate cookies: {e}, creating fresh session")
+        else:
+            log("No saved cookies found, creating fresh session")
         
         browser_session['context'] = browser_session['browser'].new_context(**context_options)
         browser_session['page'] = browser_session['context'].new_page()
@@ -626,12 +648,41 @@ def navigate_to_quick_submit():
         raise
 
 def save_cookies():
-    """Save cookies for future sessions"""
+    """Save cookies for future sessions (clean up expired cookies)"""
     try:
         browser_session = get_thread_browser_session()
         if browser_session['context']:
-            browser_session['context'].storage_state(path="cookies.json")
-            log("Cookies saved successfully")
+            import json as json_module
+            
+            # Get storage state
+            storage_path = "cookies.json"
+            browser_session['context'].storage_state(path=storage_path)
+            
+            # Clean up expired cookies
+            try:
+                current_time = time.time()
+                with open(storage_path, 'r', encoding='utf-8') as f:
+                    storage_data = json_module.load(f)
+                
+                # Filter out expired cookies
+                if 'cookies' in storage_data:
+                    original_count = len(storage_data['cookies'])
+                    storage_data['cookies'] = [
+                        c for c in storage_data['cookies'] 
+                        if c.get('expires', -1) > current_time or c.get('expires', -1) == -1
+                    ]
+                    new_count = len(storage_data['cookies'])
+                    
+                    # Save cleaned cookies back
+                    with open(storage_path, 'w', encoding='utf-8') as f:
+                        json_module.dump(storage_data, f)
+                    
+                    log(f"Cookies saved successfully ({original_count} -> {new_count} after cleanup)")
+                else:
+                    log("Cookies saved successfully")
+            except Exception as cleanup_err:
+                log(f"Cookies saved but cleanup warning: {cleanup_err}")
+                
     except Exception as e:
         log(f"[{threading.current_thread().name}] Error saving cookies: {e}")
 
