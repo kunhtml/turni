@@ -12,8 +12,7 @@ from turnitin_auth import get_session_page, navigate_to_quick_submit, cleanup_br
 from turnitin_submission import submit_document
 from turnitin_reports import (
     find_submission_with_retry, 
-    download_reports_with_retry, 
-    send_reports_to_user, 
+    download_reports, 
     cleanup_files
 )
 
