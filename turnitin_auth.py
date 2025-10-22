@@ -509,71 +509,83 @@ def check_and_perform_login():
         except Exception as debug_err:
             log(f"Debug check error: {debug_err}")
         
-        # Verify login success
+        # Verify login success - wait for Quick Submit link to appear
+        log("Waiting for page to stabilize after login...")
+        page.wait_for_timeout(2000)  # Give page time to fully render
+        
         try:
+            # Wait for Quick Submit link to appear on the page
+            log("Looking for Quick Submit link: a.sn_quick_submit")
             page.wait_for_selector('a.sn_quick_submit', timeout=30000)
-            log("✅ Quick Submit link found - login successful!")
-            save_cookies()
-            return True
-        except:
-            log("⚠️ Quick Submit link not found immediately, checking if on home page...")
+            log("✅ Quick Submit link found!")
             
-            # Check if we're on home/dashboard page (instructor account after login)
+            # Give page a moment to fully load
+            page.wait_for_load_state('networkidle', timeout=30000)
+            page.wait_for_timeout(1000)
+            
+            # Click the Quick Submit link
             try:
-                after_login_url = page.url
-                page_content = page.content().lower()
-                
-                # If still on login page, login failed
-                if "login_page.asp" in after_login_url:
-                    log("❌ Still on login page - login failed")
-                    return False
-                
-                # If on home page, navigate to Quick Submit
-                if "home" in after_login_url or "t_assignments" in after_login_url or page_content.count("quick submit") > 0:
-                    log("On home/assignment page, looking for Quick Submit link...")
+                quick_submit_element = page.query_selector('a.sn_quick_submit')
+                if quick_submit_element:
+                    log("Clicking on Quick Submit link...")
+                    quick_submit_element.click()
+                    log("✅ Clicked Quick Submit - waiting for page to load...")
                     
-                    quick_submit_selectors = [
-                        'a.sn_quick_submit',
-                        'a[href*="quicksubmit"]',
-                        'li:has-text("Quick Submit") a',
-                        'a:has-text("Quick Submit")',
-                    ]
-                    
-                    for selector in quick_submit_selectors:
-                        try:
-                            log(f"Trying selector: {selector}")
-                            quick_submit = page.query_selector(selector)
-                            if quick_submit:
-                                log(f"Found Quick Submit with selector: {selector}")
-                                # Wait for page stability
-                                page.wait_for_load_state('networkidle', timeout=30000)
-                                page.wait_for_timeout(2000)
-                                quick_submit.click()
-                                log("✅ Clicked Quick Submit link")
-                                page.wait_for_load_state('networkidle', timeout=30000)
-                                save_cookies()
-                                return True
-                        except Exception as e:
-                            log(f"Selector {selector} failed: {e}")
-                            continue
-                    
-                    log("Could not find Quick Submit link, but may still be logged in")
+                    # Wait for navigation to complete
+                    page.wait_for_load_state('networkidle', timeout=30000)
+                    log("✅ Quick Submit page loaded successfully!")
                     save_cookies()
                     return True
-                
-            except Exception as e:
-                log(f"Error navigating to Quick Submit: {e}")
-            
-            # If we get here, try one more time with a longer wait
-            try:
-                log("Retrying Quick Submit search with longer timeout...")
-                page.wait_for_selector('a.sn_quick_submit', timeout=60000)
-                log("✅ Quick Submit found on retry")
+            except Exception as click_err:
+                log(f"Error clicking Quick Submit: {click_err}")
+                # If click failed but element exists, we're still logged in
+                log("Quick Submit element exists but click failed - trying alternative...")
                 save_cookies()
                 return True
-            except:
-                log("❌ Quick Submit not found - login may have failed")
+                
+        except PlaywrightTimeout:
+            log("⚠️ Quick Submit link not found immediately, checking if still logged in...")
+            
+            # Check if we're still on login page
+            current_url = page.url
+            if "login_page.asp" in current_url:
+                log("❌ Still on login page - login failed")
                 return False
+            
+            # We're not on login page, so login likely succeeded
+            log("✅ Login successful (not on login page), but Quick Submit link not immediately visible")
+            log(f"Current URL: {current_url}")
+            
+            # Try to find and click Quick Submit with alternative selectors
+            quick_submit_selectors = [
+                ('a[class="sn_quick_submit"]', 'CSS class selector'),
+                ('a[class*="sn_quick_submit"]', 'CSS class partial match'),
+                ('a:has-text("Quick Submit")', 'Text-based selector'),
+            ]
+            
+            for selector, description in quick_submit_selectors:
+                try:
+                    log(f"Trying {description}: {selector}")
+                    element = page.query_selector(selector)
+                    if element:
+                        log(f"Found Quick Submit with {description}, clicking...")
+                        page.wait_for_load_state('networkidle', timeout=30000)
+                        element.click()
+                        page.wait_for_load_state('networkidle', timeout=30000)
+                        log("✅ Quick Submit clicked successfully")
+                        save_cookies()
+                        return True
+                except Exception as e:
+                    log(f"{description} failed: {e}")
+                    continue
+            
+            log("Could not find Quick Submit link with any selector, but login appears successful")
+            save_cookies()
+            return True
+            
+        except Exception as e:
+            log(f"Login verification error: {e}")
+            return False
             
     except Exception as e:
         log(f"Login process failed: {e}")
