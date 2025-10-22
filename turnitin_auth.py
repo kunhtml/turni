@@ -449,6 +449,34 @@ def check_and_perform_login():
         log("Waiting for login to complete...")
         page.wait_for_timeout(15000)
         
+        # Debug: Check what page we're on after login
+        try:
+            after_login_url = page.url
+            after_login_title = page.title()
+            log(f"After login - URL: {after_login_url}, Title: {after_login_title}")
+            
+            # Take screenshot for debugging
+            try:
+                screenshot_path = f"debug_after_login_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                page.screenshot(path=screenshot_path)
+                log(f"Debug screenshot saved: {screenshot_path}")
+            except Exception as screenshot_err:
+                log(f"Could not save screenshot: {screenshot_err}")
+            
+            # Check page content for error messages
+            page_content = page.content().lower()
+            if "captcha" in page_content:
+                log("⚠️ CAPTCHA detected - manual intervention required")
+            elif "invalid" in page_content or "incorrect" in page_content:
+                log("⚠️ Invalid credentials or login error")
+            elif "blocked" in page_content or "denied" in page_content:
+                log("⚠️ Access blocked - IP/proxy may be blacklisted")
+            elif "two" in page_content and "factor" in page_content:
+                log("⚠️ Two-factor authentication required")
+                
+        except Exception as debug_err:
+            log(f"Debug check error: {debug_err}")
+        
         # Verify login success
         try:
             page.wait_for_selector('a.sn_quick_submit', timeout=30000)
