@@ -12,7 +12,8 @@ from turnitin_auth import get_session_page, navigate_to_quick_submit, cleanup_br
 from turnitin_submission import submit_document
 from turnitin_reports import (
     find_submission_with_retry, 
-    download_reports, 
+    download_reports_with_retry, 
+    send_reports_to_user, 
     cleanup_files
 )
 
@@ -45,45 +46,58 @@ def process_turnitin(file_path: str, chat_id: int, bot):
         log(f"File verified: {file_path} (Size: {os.path.getsize(file_path)} bytes)")
 
         # Get or create browser session (persistent)
-        from turnitin_auth import get_thread_browser_session
-        browser_session = get_thread_browser_session()
-        session_page = browser_session['page']
+        page = get_session_page()
         
-        # Check if we're stuck on login page and need to re-login
-        current_url = session_page.url
-        if 'login_page.asp' in current_url:
-            log("Browser stuck on login page, attempting re-login...")
-            cleanup_browser_session()
-            page = get_session_page()
-        else:
-            page = session_page
+        if page is None:
+            raise Exception("Failed to create browser session")
         
-        # Navigate to Quick Submit (no arguments needed)
-        navigate_to_quick_submit()
+        log(f"Browser session acquired, current URL: {page.url}")
+        
+        # Navigate to Quick Submit - page is already there from login
+        log("Quick Submit page ready for submission")
 
         # Submit the document (pass the session page)
         log("Starting document submission...")
         from turnitin_auth import get_thread_browser_session
         browser_session = get_thread_browser_session()
         session_page = browser_session['page']
+        
+        if session_page is None:
+            raise Exception("Session page is None - browser session not initialized properly")
+        
+        log(f"Session page verified, URL: {session_page.url}")
         actual_submission_title = submit_document(session_page, file_path, chat_id, timestamp, bot, processing_messages)
 
         # Find the submitted document
         log("Finding submitted document...")
-        result = find_submission_with_retry(session_page, actual_submission_title, chat_id, bot, processing_messages)
+        page1 = find_submission_with_retry(session_page, actual_submission_title, chat_id, bot, processing_messages)
         
-        if not result or not result.get('found'):
+        if page1 is None:
             log("Document not found, user will retry later")
             return  # Exit without closing browser
 
-        # Download reports (this function handles downloading and sending to user)
-        log("Downloading and sending reports...")
-        submission_info = download_reports(session_page, chat_id, bot, original_filename)
+        # Download reports
+        log("Downloading reports...")
+        sim_filename, ai_filename = download_reports_with_retry(page1, chat_id, timestamp, bot, processing_messages)
+        
+        if sim_filename is None and ai_filename is None:
+            log("Download failed, user will retry later")
+            return  # Exit without closing browser
+
+        # Send reports to user
+        log("Sending reports to user...")
+        submission_info = send_reports_to_user(chat_id, sim_filename, ai_filename, bot, processing_messages, original_filename)
 
         # Clean up files only (keep browser open)
-        # Note: download_reports already sends files to Telegram and cleans them up
-        cleanup_files(None, None, file_path)
+        cleanup_files(sim_filename, ai_filename, file_path)
         
+        # Close only the submission page (page1), keep main session
+        try:
+            page1.close()
+            log("Closed submission page, keeping main session active")
+        except Exception as close_error:
+            log(f"Error closing submission page: {close_error}")
+
         # Navigate to assignment inbox for next request
         try:
             from turnitin_auth import get_thread_browser_session

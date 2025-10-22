@@ -28,6 +28,9 @@ playwright_lock = threading.Lock()
 # Thread-safety lock for submission search (prevent concurrent inbox page reloads)
 submission_search_lock = threading.Lock()
 
+# Thread-safety lock for login process (only one thread logs in at a time)
+login_lock = threading.Lock()
+
 # Rotating user agents for better success rate
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -316,6 +319,11 @@ def get_or_create_browser_session():
             browser_session['logged_in'] = True
             browser_session['last_activity'] = datetime.now()
             log("Browser session created and logged in successfully")
+            
+            # Double-check page is not None
+            if browser_session['page'] is None:
+                raise Exception("Page is None after login")
+            
             return browser_session['page']
         else:
             raise Exception("Login failed")
@@ -330,251 +338,256 @@ def check_and_perform_login():
     browser_session = get_thread_browser_session()
     page = browser_session['page']
     
-    try:
-        # Go to Turnitin login page with longer timeout
-        log("Navigating to Turnitin login page...")
-        page.goto("https://www.turnitin.com/login_page.asp?lang=en_us", timeout=90000)
-        random_wait(3, 5)
+    # Acquire login lock - only one thread logs in at a time
+    log(f"[{threading.current_thread().name}] Waiting for login lock...")
+    with login_lock:
+        log(f"[{threading.current_thread().name}] Acquired login lock, starting login process...")
         
-        # Wait for page to fully load
-        page.wait_for_load_state('networkidle', timeout=30000)
-        
-        # Check current URL and page title for debugging
-        current_url = page.url
-        page_title = page.title()
-        log(f"Login page loaded - URL: {current_url}, Title: {page_title}")
-        
-        # Check if we're already logged in
         try:
-            page.wait_for_selector('a.sn_quick_submit', timeout=10000)
-            log("Already logged in - Quick Submit found")
-            save_cookies()
-            return True
-        except:
-            log("Need to perform login")
+            # Go to Turnitin login page with longer timeout
+            log("Navigating to Turnitin login page...")
+            page.goto("https://www.turnitin.com/login_page.asp?lang=en_us", timeout=90000)
+            random_wait(3, 5)
             
-        # Check if we got blocked (403 error page)
-        if "403" in page_title or "blocked" in page.content().lower():
-            log("Detected blocking page - may need different proxy")
-            return False
+            # Wait for page to fully load
+            page.wait_for_load_state('networkidle', timeout=30000)
             
-        # Try multiple email selectors with increased timeout
-        email_selectors = [
-            'input[name="email"]',
-            'input[type="email"]',
-            'input[id="email"]',
-            '#email',
-            '[placeholder*="email" i]'
-        ]
-        
-        email_filled = False
-        for selector in email_selectors:
+            # Check current URL and page title for debugging
+            current_url = page.url
+            page_title = page.title()
+            log(f"Login page loaded - URL: {current_url}, Title: {page_title}")
+            
+            # Check if we're already logged in
             try:
-                log(f"Trying email selector: {selector}")
-                page.wait_for_selector(selector, timeout=20000)
-                page.fill(selector, TURNITIN_EMAIL)
-                log(f"Email filled successfully with selector: {selector}")
-                email_filled = True
-                break
-            except Exception as selector_error:
-                log(f"Email selector {selector} failed: {selector_error}")
-                continue
-        
-        if not email_filled:
-            log("Could not find email field with any selector")
-            # Take screenshot for debugging
-            try:
-                page.screenshot(path="debug_login_no_email.png")
-                log("Debug screenshot saved: debug_login_no_email.png")
+                page.wait_for_selector('a.sn_quick_submit', timeout=10000)
+                log("Already logged in - Quick Submit found")
+                save_cookies()
+                return True
             except:
-                pass
-            return False
-        
-        random_wait(2, 3)
-        
-        # Fill password with multiple selectors
-        password_selectors = [
-            'input[name="user_password"]',  # Updated: actual name from current HTML
-            '#password',                   # ID selector (most reliable)
-            'input[type="password"]',      # Type selector (fallback)
-            'input[name="password"]',      # Old name selector (fallback)
-            '[placeholder*="password" i]'  # Placeholder selector (fallback)
-        ]
-        
-        password_filled = False
-        for selector in password_selectors:
-            try:
-                log(f"Trying password selector: {selector}")
-                page.fill(selector, TURNITIN_PASSWORD)
-                log(f"Password filled successfully with selector: {selector}")
-                password_filled = True
-                break
-            except Exception as selector_error:
-                log(f"Password selector {selector} failed: {selector_error}")
-                continue
-        
-        if not password_filled:
-            log("Could not find password field")
-            return False
-        
-        random_wait(2, 3)
-        
-        # Click login button with multiple selectors
-        login_selectors = [
-            'input[name="submit"][value="Log in"]',  # Most specific from current HTML
-            'input[type="submit"]',                  # Type selector (reliable)
-            'input[value="Log in"]',                 # Value selector (reliable)
-            'button[type="submit"]',                 # Button fallback
-            'button:has-text("Log in")',            # Text-based fallback
-            'input[value*="Log" i]'                  # Partial match fallback
-        ]
-        
-        login_clicked = False
-        for selector in login_selectors:
-            try:
-                log(f"Trying login button selector: {selector}")
-                page.click(selector)
-                log(f"Login button clicked successfully with selector: {selector}")
-                login_clicked = True
-                break
-            except Exception as selector_error:
-                log(f"Login selector {selector} failed: {selector_error}")
-                continue
-        
-        if not login_clicked:
-            log("Could not find or click login button")
-            return False
-        
-        # Wait for login to complete - wait for navigation
-        log("Waiting for login to complete and page to load...")
-        try:
-            page.wait_for_load_state('networkidle', timeout=60000)
-            log("Page fully loaded after login")
-        except Exception as load_err:
-            log(f"Page load timeout (continuing anyway): {load_err}")
-        
-        page.wait_for_timeout(3000)  # Extra wait for any redirects
-        
-        # Debug: Check what page we're on after login
-        try:
-            after_login_url = page.url
-            after_login_title = page.title()
-            log(f"After login - URL: {after_login_url}, Title: {after_login_title}")
+                log("Need to perform login")
+                
+            # Check if we got blocked (403 error page)
+            if "403" in page_title or "blocked" in page.content().lower():
+                log("Detected blocking page - may need different proxy")
+                return False
+                
+            # Try multiple email selectors with increased timeout
+            email_selectors = [
+                'input[name="email"]',
+                'input[type="email"]',
+                'input[id="email"]',
+                '#email',
+                '[placeholder*="email" i]'
+            ]
             
-            # Save HTML content for debugging (works on headless servers)
-            try:
-                html_path = f"debug_after_login_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-                page_html = page.content()
-                with open(html_path, 'w', encoding='utf-8') as f:
-                    f.write(page_html)
-                log(f"Debug HTML saved: {html_path}")
-            except Exception as html_err:
-                log(f"Could not save HTML: {html_err}")
-            
-            # Check if still on login page - most reliable indicator
-            if "login_page.asp" in after_login_url:
-                log("⚠️ Still on login page - credentials may be incorrect")
-                # Extract any error messages from the page
+            email_filled = False
+            for selector in email_selectors:
                 try:
-                    error_selectors = [
-                        '.error-message',
-                        '.alert',
-                        '[class*="error"]',
-                        '[id*="error"]'
-                    ]
-                    for selector in error_selectors:
-                        error_elements = page.query_selector_all(selector)
-                        for elem in error_elements:
-                            error_text = elem.inner_text().strip()
-                            if error_text:
-                                log(f"Error message found: {error_text}")
+                    log(f"Trying email selector: {selector}")
+                    page.wait_for_selector(selector, timeout=20000)
+                    page.fill(selector, TURNITIN_EMAIL)
+                    log(f"Email filled successfully with selector: {selector}")
+                    email_filled = True
+                    break
+                except Exception as selector_error:
+                    log(f"Email selector {selector} failed: {selector_error}")
+                    continue
+            
+            if not email_filled:
+                log("Could not find email field with any selector")
+                # Take screenshot for debugging
+                try:
+                    page.screenshot(path="debug_login_no_email.png")
+                    log("Debug screenshot saved: debug_login_no_email.png")
                 except:
                     pass
-                    
-        except Exception as debug_err:
-            log(f"Debug check error: {debug_err}")
-        
-        # Verify login success - wait for Quick Submit link to appear
-        log("Waiting for page to stabilize after login...")
-        page.wait_for_timeout(2000)  # Give page time to fully render
-        
-        try:
-            # Wait for Quick Submit link to appear on the page
-            log("Looking for Quick Submit link: a.sn_quick_submit")
-            page.wait_for_selector('a.sn_quick_submit', timeout=30000)
-            log("✅ Quick Submit link found!")
+                return False
             
-            # Give page a moment to fully load
-            page.wait_for_load_state('networkidle', timeout=30000)
-            page.wait_for_timeout(1000)
+            random_wait(2, 3)
             
-            # Click the Quick Submit link
+            # Fill password with multiple selectors
+            password_selectors = [
+                'input[name="user_password"]',  # Updated: actual name from current HTML
+                '#password',                   # ID selector (most reliable)
+                'input[type="password"]',      # Type selector (fallback)
+                'input[name="password"]',      # Old name selector (fallback)
+                '[placeholder*="password" i]'  # Placeholder selector (fallback)
+            ]
+            
+            password_filled = False
+            for selector in password_selectors:
+                try:
+                    log(f"Trying password selector: {selector}")
+                    page.fill(selector, TURNITIN_PASSWORD)
+                    log(f"Password filled successfully with selector: {selector}")
+                    password_filled = True
+                    break
+                except Exception as selector_error:
+                    log(f"Password selector {selector} failed: {selector_error}")
+                    continue
+            
+            if not password_filled:
+                log("Could not find password field")
+                return False
+            
+            random_wait(2, 3)
+            
+            # Click login button with multiple selectors
+            login_selectors = [
+                'input[name="submit"][value="Log in"]',  # Most specific from current HTML
+                'input[type="submit"]',                  # Type selector (reliable)
+                'input[value="Log in"]',                 # Value selector (reliable)
+                'button[type="submit"]',                 # Button fallback
+                'button:has-text("Log in")',            # Text-based fallback
+                'input[value*="Log" i]'                  # Partial match fallback
+            ]
+            
+            login_clicked = False
+            for selector in login_selectors:
+                try:
+                    log(f"Trying login button selector: {selector}")
+                    page.click(selector)
+                    log(f"Login button clicked successfully with selector: {selector}")
+                    login_clicked = True
+                    break
+                except Exception as selector_error:
+                    log(f"Login selector {selector} failed: {selector_error}")
+                    continue
+            
+            if not login_clicked:
+                log("Could not find or click login button")
+                return False
+            
+            # Wait for login to complete - wait for navigation
+            log("Waiting for login to complete and page to load...")
             try:
-                quick_submit_element = page.query_selector('a.sn_quick_submit')
-                if quick_submit_element:
-                    log("Clicking on Quick Submit link...")
-                    quick_submit_element.click()
-                    log("✅ Clicked Quick Submit - waiting for page to load...")
-                    
-                    # Wait for navigation to complete
-                    page.wait_for_load_state('networkidle', timeout=30000)
-                    log("✅ Quick Submit page loaded successfully!")
+                page.wait_for_load_state('networkidle', timeout=60000)
+                log("Page fully loaded after login")
+            except Exception as load_err:
+                log(f"Page load timeout (continuing anyway): {load_err}")
+            
+            page.wait_for_timeout(3000)  # Extra wait for any redirects
+            
+            # Debug: Check what page we're on after login
+            try:
+                after_login_url = page.url
+                after_login_title = page.title()
+                log(f"After login - URL: {after_login_url}, Title: {after_login_title}")
+                
+                # Save HTML content for debugging (works on headless servers)
+                try:
+                    html_path = f"debug_after_login_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+                    page_html = page.content()
+                    with open(html_path, 'w', encoding='utf-8') as f:
+                        f.write(page_html)
+                    log(f"Debug HTML saved: {html_path}")
+                except Exception as html_err:
+                    log(f"Could not save HTML: {html_err}")
+                
+                # Check if still on login page - most reliable indicator
+                if "login_page.asp" in after_login_url:
+                    log("⚠️ Still on login page - credentials may be incorrect")
+                    # Extract any error messages from the page
+                    try:
+                        error_selectors = [
+                            '.error-message',
+                            '.alert',
+                            '[class*="error"]',
+                            '[id*="error"]'
+                        ]
+                        for selector in error_selectors:
+                            error_elements = page.query_selector_all(selector)
+                            for elem in error_elements:
+                                error_text = elem.inner_text().strip()
+                                if error_text:
+                                    log(f"Error message found: {error_text}")
+                    except:
+                        pass
+                        
+            except Exception as debug_err:
+                log(f"Debug check error: {debug_err}")
+            
+            # Verify login success - wait for Quick Submit link to appear
+            log("Waiting for page to stabilize after login...")
+            page.wait_for_timeout(2000)  # Give page time to fully render
+            
+            try:
+                # Wait for Quick Submit link to appear on the page
+                log("Looking for Quick Submit link: a.sn_quick_submit")
+                page.wait_for_selector('a.sn_quick_submit', timeout=30000)
+                log("✅ Quick Submit link found!")
+                
+                # Give page a moment to fully load
+                page.wait_for_load_state('networkidle', timeout=30000)
+                page.wait_for_timeout(1000)
+                
+                # Click the Quick Submit link
+                try:
+                    quick_submit_element = page.query_selector('a.sn_quick_submit')
+                    if quick_submit_element:
+                        log("Clicking on Quick Submit link...")
+                        quick_submit_element.click()
+                        log("✅ Clicked Quick Submit - waiting for page to load...")
+                        
+                        # Wait for navigation to complete
+                        page.wait_for_load_state('networkidle', timeout=30000)
+                        log("✅ Quick Submit page loaded successfully!")
+                        save_cookies()
+                        return True
+                except Exception as click_err:
+                    log(f"Error clicking Quick Submit: {click_err}")
+                    # If click failed but element exists, we're still logged in
+                    log("Quick Submit element exists but click failed - trying alternative...")
                     save_cookies()
                     return True
-            except Exception as click_err:
-                log(f"Error clicking Quick Submit: {click_err}")
-                # If click failed but element exists, we're still logged in
-                log("Quick Submit element exists but click failed - trying alternative...")
+                    
+            except PlaywrightTimeout:
+                log("⚠️ Quick Submit link not found immediately, checking if still logged in...")
+                
+                # Check if we're still on login page
+                current_url = page.url
+                if "login_page.asp" in current_url:
+                    log("❌ Still on login page - login failed")
+                    return False
+                
+                # We're not on login page, so login likely succeeded
+                log("✅ Login successful (not on login page), but Quick Submit link not immediately visible")
+                log(f"Current URL: {current_url}")
+                
+                # Try to find and click Quick Submit with alternative selectors
+                quick_submit_selectors = [
+                    ('a[class="sn_quick_submit"]', 'CSS class selector'),
+                    ('a[class*="sn_quick_submit"]', 'CSS class partial match'),
+                    ('a:has-text("Quick Submit")', 'Text-based selector'),
+                ]
+                
+                for selector, description in quick_submit_selectors:
+                    try:
+                        log(f"Trying {description}: {selector}")
+                        element = page.query_selector(selector)
+                        if element:
+                            log(f"Found Quick Submit with {description}, clicking...")
+                            page.wait_for_load_state('networkidle', timeout=30000)
+                            element.click()
+                            page.wait_for_load_state('networkidle', timeout=30000)
+                            log("✅ Quick Submit clicked successfully")
+                            save_cookies()
+                            return True
+                    except Exception as e:
+                        log(f"{description} failed: {e}")
+                        continue
+                
+                log("Could not find Quick Submit link with any selector, but login appears successful")
                 save_cookies()
                 return True
                 
-        except PlaywrightTimeout:
-            log("⚠️ Quick Submit link not found immediately, checking if still logged in...")
-            
-            # Check if we're still on login page
-            current_url = page.url
-            if "login_page.asp" in current_url:
-                log("❌ Still on login page - login failed")
+            except Exception as e:
+                log(f"Login verification error: {e}")
                 return False
-            
-            # We're not on login page, so login likely succeeded
-            log("✅ Login successful (not on login page), but Quick Submit link not immediately visible")
-            log(f"Current URL: {current_url}")
-            
-            # Try to find and click Quick Submit with alternative selectors
-            quick_submit_selectors = [
-                ('a[class="sn_quick_submit"]', 'CSS class selector'),
-                ('a[class*="sn_quick_submit"]', 'CSS class partial match'),
-                ('a:has-text("Quick Submit")', 'Text-based selector'),
-            ]
-            
-            for selector, description in quick_submit_selectors:
-                try:
-                    log(f"Trying {description}: {selector}")
-                    element = page.query_selector(selector)
-                    if element:
-                        log(f"Found Quick Submit with {description}, clicking...")
-                        page.wait_for_load_state('networkidle', timeout=30000)
-                        element.click()
-                        page.wait_for_load_state('networkidle', timeout=30000)
-                        log("✅ Quick Submit clicked successfully")
-                        save_cookies()
-                        return True
-                except Exception as e:
-                    log(f"{description} failed: {e}")
-                    continue
-            
-            log("Could not find Quick Submit link with any selector, but login appears successful")
-            save_cookies()
-            return True
-            
+                
         except Exception as e:
-            log(f"Login verification error: {e}")
+            log(f"Login process failed: {e}")
             return False
-            
-    except Exception as e:
-        log(f"Login process failed: {e}")
-        return False
 
 def navigate_to_quick_submit():
     """Navigate to Quick Submit page using persistent session"""
