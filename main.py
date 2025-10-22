@@ -28,7 +28,7 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode='HTML')
 # Processing queue and worker threads
 processing_queue = queue.Queue()
 worker_threads = []
-MAX_WORKERS = 3  # 3 workers with sequential login to avoid concurrent login issues
+MAX_WORKERS = 1  # 3 workers with sequential login to avoid concurrent login issues
 MIN_QUEUE_SIZE_FOR_SCALING = 2  # Start additional workers when queue has 2+ items
 
 # Login synchronization - ensures workers login one at a time
