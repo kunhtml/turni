@@ -73,13 +73,6 @@ def process_turnitin(file_path: str, chat_id: int, bot):
         # Note: download_reports already sends files to Telegram and cleans them up
         cleanup_files(None, None, file_path)
         
-        # Close only the submission page (page1), keep main session
-        try:
-            page1.close()
-            log("Closed submission page, keeping main session active")
-        except Exception as close_error:
-            log(f"Error closing submission page: {close_error}")
-
         # Navigate to assignment inbox for next request
         try:
             from turnitin_auth import get_thread_browser_session
