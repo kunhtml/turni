@@ -533,6 +533,28 @@ def check_and_perform_login():
             log("Waiting for page to stabilize after login...")
             page.wait_for_timeout(2000)  # Give page time to fully render
             
+            # First, verify we're logged in by checking for "Now viewing:" element
+            log("Verifying successful login by checking for 'Now viewing:' breadcrumb...")
+            try:
+                # Look for the breadcrumb with "Now viewing:" text
+                now_viewing_element = page.query_selector('h2:has-text("Now viewing:")')
+                if now_viewing_element:
+                    log("✅ Found 'Now viewing:' breadcrumb - Login successful!")
+                else:
+                    # Try alternative selector
+                    bread_crumbs = page.query_selector('#bread_crumbs h2')
+                    if bread_crumbs:
+                        h2_text = bread_crumbs.inner_text()
+                        if "Now viewing" in h2_text:
+                            log("✅ Found 'Now viewing:' in breadcrumbs - Login successful!")
+                        else:
+                            log(f"⚠️ Breadcrumbs found but wrong text: {h2_text}")
+                    else:
+                        log("⚠️ Could not find 'Now viewing:' breadcrumb")
+            except Exception as breadcrumb_err:
+                log(f"Breadcrumb check error: {breadcrumb_err}")
+            
+            # Now look for Quick Submit link
             try:
                 # Wait for Quick Submit link to appear on the page
                 log("Looking for Quick Submit link: .sn_quick_submit")
