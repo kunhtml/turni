@@ -59,26 +59,19 @@ def process_turnitin(file_path: str, chat_id: int, bot):
 
         # Find the submitted document
         log("Finding submitted document...")
-        page1 = find_submission_with_retry(session_page, actual_submission_title, chat_id, bot, processing_messages)
+        result = find_submission_with_retry(session_page, actual_submission_title, chat_id, bot, processing_messages)
         
-        if page1 is None:
+        if not result or not result.get('found'):
             log("Document not found, user will retry later")
             return  # Exit without closing browser
 
-        # Download reports
-        log("Downloading reports...")
-        sim_filename, ai_filename = download_reports_with_retry(page1, chat_id, timestamp, bot, processing_messages)
-        
-        if sim_filename is None and ai_filename is None:
-            log("Download failed, user will retry later")
-            return  # Exit without closing browser
-
-        # Send reports to user
-        log("Sending reports to user...")
-        submission_info = send_reports_to_user(chat_id, sim_filename, ai_filename, bot, processing_messages, original_filename)
+        # Download reports (this function handles downloading and sending to user)
+        log("Downloading and sending reports...")
+        submission_info = download_reports(session_page, chat_id, bot, original_filename)
 
         # Clean up files only (keep browser open)
-        cleanup_files(sim_filename, ai_filename, file_path)
+        # Note: download_reports already sends files to Telegram and cleans them up
+        cleanup_files(None, None, file_path)
         
         # Close only the submission page (page1), keep main session
         try:
