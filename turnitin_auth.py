@@ -368,16 +368,41 @@ def check_and_perform_login():
         try:
             # Go to Turnitin login page with longer timeout
             log("Navigating to Turnitin login page...")
-            page.goto("https://www.turnitin.com/login_page.asp?lang=en_us", timeout=90000)
-            random_wait(3, 5)
+            page.goto("https://www.turnitin.com/login_page.asp?lang=en_us", timeout=90000, wait_until='load')
+            log("Page navigation complete, waiting for full page load...")
             
-            # Wait for page to fully load
-            page.wait_for_load_state('networkidle', timeout=30000)
+            # Wait for DOM to be ready
+            log("Waiting for DOM to be ready...")
+            page.wait_for_load_state('domcontentloaded', timeout=60000)
+            
+            # Wait for all network requests to complete
+            log("Waiting for network to be idle...")
+            page.wait_for_load_state('networkidle', timeout=60000)
+            
+            # Wait for document to be fully ready
+            log("Waiting for document.readyState to be complete...")
+            page.wait_for_function(
+                '() => document.readyState === "complete"',
+                timeout=60000
+            )
+            
+            # Wait for jQuery to be ready (if present)
+            try:
+                page.wait_for_function(
+                    '() => typeof jQuery !== "undefined" ? jQuery.active === 0 : true',
+                    timeout=30000
+                )
+                log("jQuery AJAX requests completed")
+            except:
+                log("jQuery not present or no AJAX requests")
+            
+            # Extra wait for dynamic content rendering
+            random_wait(2, 3)
             
             # Check current URL and page title for debugging
             current_url = page.url
             page_title = page.title()
-            log(f"Login page loaded - URL: {current_url}, Title: {page_title}")
+            log(f"Login page fully loaded - URL: {current_url}, Title: {page_title}")
             
             # Check if we're already logged in
             try:
@@ -406,7 +431,28 @@ def check_and_perform_login():
             for selector in email_selectors:
                 try:
                     log(f"Trying email selector: {selector}")
+                    # Wait for email field to be visible
                     page.wait_for_selector(selector, timeout=20000)
+                    log(f"Email field element found")
+                    
+                    # Wait for element to be enabled and interactive
+                    page.wait_for_function(
+                        f'''
+                        () => {{
+                            const elem = document.querySelector('{selector}');
+                            return elem && 
+                                   !elem.disabled && 
+                                   getComputedStyle(elem).visibility !== 'hidden' &&
+                                   getComputedStyle(elem).display !== 'none';
+                        }}
+                        ''',
+                        timeout=15000
+                    )
+                    log(f"Email field is now ready and interactive")
+                    
+                    # Additional wait for JS rendering
+                    random_wait(0.5, 1)
+                    
                     page.fill(selector, TURNITIN_EMAIL)
                     log(f"Email filled successfully with selector: {selector}")
                     email_filled = True
@@ -440,6 +486,26 @@ def check_and_perform_login():
             for selector in password_selectors:
                 try:
                     log(f"Trying password selector: {selector}")
+                    # Wait for password field to be visible and interactive
+                    page.wait_for_selector(selector, timeout=20000)
+                    log(f"Password field found, checking if it's interactive...")
+                    
+                    # Wait for element to be enabled
+                    page.wait_for_function(
+                        f'''
+                        () => {{
+                            const elem = document.querySelector('{selector}');
+                            return elem && 
+                                   !elem.disabled && 
+                                   getComputedStyle(elem).visibility !== 'hidden' &&
+                                   getComputedStyle(elem).display !== 'none';
+                        }}
+                        ''',
+                        timeout=15000
+                    )
+                    log(f"Password field is now ready and interactive")
+                    
+                    random_wait(0.5, 1)
                     page.fill(selector, TURNITIN_PASSWORD)
                     log(f"Password filled successfully with selector: {selector}")
                     password_filled = True
@@ -480,15 +546,54 @@ def check_and_perform_login():
                 log("Could not find or click login button")
                 return False
             
-            # Wait for login to complete - wait for navigation
-            log("Waiting for login to complete and page to load...")
+            # Wait for login to complete and page to fully load
+            log("Login button clicked, waiting for page to redirect and load...")
+            
+            # Wait for initial navigation to start
+            try:
+                page.wait_for_load_state('load', timeout=60000)
+                log("Page load state reached")
+            except:
+                log("Page load timeout, checking current state...")
+            
+            # Wait for DOM to be ready
+            try:
+                page.wait_for_load_state('domcontentloaded', timeout=60000)
+                log("DOM content loaded")
+            except:
+                pass
+            
+            # Wait for network to be idle (all AJAX requests done)
             try:
                 page.wait_for_load_state('networkidle', timeout=60000)
-                log("Page fully loaded after login")
-            except Exception as load_err:
-                log(f"Page load timeout (continuing anyway): {load_err}")
+                log("Network is idle - all requests completed")
+            except:
+                log("Network timeout, continuing anyway...")
             
-            page.wait_for_timeout(3000)  # Extra wait for any redirects
+            # Wait for document to be fully ready
+            try:
+                page.wait_for_function(
+                    '() => document.readyState === "complete"',
+                    timeout=60000
+                )
+                log("Document is fully loaded")
+            except:
+                log("Document load timeout")
+            
+            # Wait for jQuery AJAX to complete if present
+            try:
+                page.wait_for_function(
+                    '() => typeof jQuery !== "undefined" ? jQuery.active === 0 : true',
+                    timeout=30000
+                )
+                log("jQuery AJAX requests completed")
+            except:
+                pass
+            
+            # Extra wait for rendering
+            random_wait(2, 3)
+            
+            page.wait_for_timeout(1000)  # Final buffer
             
             # Debug: Check what page we're on after login
             try:
