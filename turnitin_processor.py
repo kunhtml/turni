@@ -12,9 +12,7 @@ from turnitin_auth import get_session_page, navigate_to_quick_submit, cleanup_br
 from turnitin_submission import submit_document
 from turnitin_reports import (
     find_submission_with_retry, 
-    download_reports_with_retry, 
-    send_reports_to_user, 
-    cleanup_files
+    download_reports_with_retry
 )
 
 # Load environment variables
@@ -76,20 +74,24 @@ def process_turnitin(file_path: str, chat_id: int, bot):
             log("Document not found, user will retry later")
             return  # Exit without closing browser
 
-        # Download reports
+        # Download reports (handles downloading and sending to Telegram)
         log("Downloading reports...")
-        sim_filename, ai_filename = download_reports_with_retry(page1, chat_id, timestamp, bot, processing_messages)
+        submission_info = download_reports_with_retry(page1, chat_id, bot, original_filename)
         
-        if sim_filename is None and ai_filename is None:
+        if not submission_info or not submission_info.get('reports_available'):
             log("Download failed, user will retry later")
             return  # Exit without closing browser
 
-        # Send reports to user
-        log("Sending reports to user...")
-        submission_info = send_reports_to_user(chat_id, sim_filename, ai_filename, bot, processing_messages, original_filename)
-
-        # Clean up files only (keep browser open)
-        cleanup_files(sim_filename, ai_filename, file_path)
+        # Reports are already sent by download_reports_with_retry
+        # Clean up files
+        try:
+            if os.path.exists(f"downloads/similarity_{chat_id}_*.pdf"):
+                for f in os.listdir("downloads"):
+                    if f"similarity_{chat_id}" in f or f"ai_{chat_id}" in f:
+                        os.remove(f"downloads/{f}")
+                        log(f"Cleaned up {f}")
+        except Exception as cleanup_err:
+            log(f"Cleanup warning: {cleanup_err}")
         
         # Close only the submission page (page1), keep main session
         try:
