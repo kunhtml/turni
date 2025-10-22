@@ -513,8 +513,8 @@ def check_and_perform_login():
             
             try:
                 # Wait for Quick Submit link to appear on the page
-                log("Looking for Quick Submit link: a.sn_quick_submit")
-                page.wait_for_selector('a.sn_quick_submit', timeout=30000)
+                log("Looking for Quick Submit link: .sn_quick_submit")
+                page.wait_for_selector('.sn_quick_submit', timeout=30000)
                 log("✅ Quick Submit link found!")
                 
                 # Give page a moment to fully load
@@ -523,7 +523,7 @@ def check_and_perform_login():
                 
                 # Click the Quick Submit link
                 try:
-                    quick_submit_element = page.query_selector('a.sn_quick_submit')
+                    quick_submit_element = page.query_selector('.sn_quick_submit')
                     if quick_submit_element:
                         log("Clicking on Quick Submit link...")
                         quick_submit_element.click()
