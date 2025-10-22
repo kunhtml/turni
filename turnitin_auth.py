@@ -183,7 +183,6 @@ def get_working_proxy():
 def test_browser_proxy(page, proxy_info):
     """Test proxy functionality within the browser context"""
     test_urls = [
-        'https://httpbin.org/ip',
         'https://api64.ipify.org?format=json',
         'https://icanhazip.com'
     ]
