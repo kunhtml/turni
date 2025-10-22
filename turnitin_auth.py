@@ -455,16 +455,20 @@ def check_and_perform_login():
             after_login_title = page.title()
             log(f"After login - URL: {after_login_url}, Title: {after_login_title}")
             
-            # Take screenshot for debugging
+            # Save HTML content for debugging (works on headless servers)
             try:
-                screenshot_path = f"debug_after_login_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                page.screenshot(path=screenshot_path)
-                log(f"Debug screenshot saved: {screenshot_path}")
-            except Exception as screenshot_err:
-                log(f"Could not save screenshot: {screenshot_err}")
+                html_path = f"debug_after_login_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+                page_html = page.content()
+                with open(html_path, 'w', encoding='utf-8') as f:
+                    f.write(page_html)
+                log(f"Debug HTML saved: {html_path}")
+            except Exception as html_err:
+                log(f"Could not save HTML: {html_err}")
             
             # Check page content for error messages
             page_content = page.content().lower()
+            
+            # Check for common error indicators
             if "captcha" in page_content:
                 log("⚠️ CAPTCHA detected - manual intervention required")
             elif "invalid" in page_content or "incorrect" in page_content:
@@ -473,7 +477,29 @@ def check_and_perform_login():
                 log("⚠️ Access blocked - IP/proxy may be blacklisted")
             elif "two" in page_content and "factor" in page_content:
                 log("⚠️ Two-factor authentication required")
-                
+            elif "error" in after_login_url.lower():
+                log(f"⚠️ Redirected to error page: {after_login_url}")
+            
+            # Check if still on login page
+            if "login_page.asp" in after_login_url:
+                log("⚠️ Still on login page - credentials may be incorrect")
+                # Extract any error messages from the page
+                try:
+                    error_selectors = [
+                        '.error-message',
+                        '.alert',
+                        '[class*="error"]',
+                        '[id*="error"]'
+                    ]
+                    for selector in error_selectors:
+                        error_elements = page.query_selector_all(selector)
+                        for elem in error_elements:
+                            error_text = elem.inner_text().strip()
+                            if error_text:
+                                log(f"Error message found: {error_text}")
+                except:
+                    pass
+                    
         except Exception as debug_err:
             log(f"Debug check error: {debug_err}")
         
