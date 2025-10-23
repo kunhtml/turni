@@ -636,49 +636,51 @@ def download_reports(page, chat_id, bot, original_filename=None):
         download = None
         if sim_available:
             # Try to use the explicit Similarity Report menu item first (li[1])
-        download = menu_click_download(
-            page,
-            "ul.download-menu li:nth-child(1) button",
-            timeout_ms=90000,
-            description="sim",
-        )
-        if not download:
-            # Fallback to data-px attribute if order changes
             download = menu_click_download(
                 page,
-                "ul.download-menu button[data-px='SimReportDownloadClicked']",
+                "ul.download-menu li:nth-child(1) button",
                 timeout_ms=90000,
                 description="sim",
             )
-        if not download:
-            # As a fallback, attempt direct anchors if any exist
-            def attempt_direct_download(p, timeout_ms=60000):
-                selectors = [
-                    "a[download]",
-                    "a[title*='Download' i]",
-                ]
-                for sel in selectors:
-                    try:
-                        el = p.query_selector(sel)
-                        if not el:
+            if not download:
+                # Fallback to data-px attribute if order changes
+                download = menu_click_download(
+                    page,
+                    "ul.download-menu button[data-px='SimReportDownloadClicked']",
+                    timeout_ms=90000,
+                    description="sim",
+                )
+            if not download:
+                # As a fallback, attempt direct anchors if any exist
+                def attempt_direct_download(p, timeout_ms=60000):
+                    selectors = [
+                        "a[download]",
+                        "a[title*='Download' i]",
+                    ]
+                    for sel in selectors:
+                        try:
+                            el = p.query_selector(sel)
+                            if not el:
+                                continue
+                            with p.expect_download(timeout=timeout_ms) as di:
+                                log(f"[{worker_name}] Trying direct download via selector: {sel}")
+                                el.click()
+                            return di.value
+                        except Exception:
                             continue
-                        with p.expect_download(timeout=timeout_ms) as di:
-                            log(f"[{worker_name}] Trying direct download via selector: {sel}")
-                            el.click()
-                        return di.value
-                    except Exception:
-                        continue
-                return None
-            download = attempt_direct_download(page, timeout_ms=90000)
-        if not download:
-            raise TimeoutError("Could not trigger Similarity report download via known selectors")
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # Save similarity report
-        sim_filename = f"downloads/similarity_{chat_id}_{timestamp}.pdf"
-        os.makedirs("downloads", exist_ok=True)
-        download.save_as(sim_filename)
-        log(f"[{worker_name}] Saved Similarity Report as {sim_filename}")
+                    return None
+                download = attempt_direct_download(page, timeout_ms=90000)
+            
+            if download:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                sim_filename = f"downloads/similarity_{chat_id}_{timestamp}.pdf"
+                os.makedirs("downloads", exist_ok=True)
+                download.save_as(sim_filename)
+                log(f"[{worker_name}] Saved Similarity Report as {sim_filename}")
+            else:
+                log(f"[{worker_name}] Failed to download Similarity report despite badge showing available")
+        else:
+            log(f"[{worker_name}] Skipping Similarity download (not available per badge check)")
         
         # Summarize what we managed to download and proceed to send
         reports_sim = bool(sim_filename and os.path.exists(sim_filename))
