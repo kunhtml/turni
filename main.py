@@ -332,8 +332,7 @@ def create_main_menu():
     markup = types.InlineKeyboardMarkup(row_width=2)
     
     markup.add(
-        types.InlineKeyboardButton("📊 My Subscription", callback_data="my_subscription"),
-        types.InlineKeyboardButton("📜 My History", callback_data="my_history")
+        types.InlineKeyboardButton("📊 My Subscription", callback_data="my_subscription")
     )
     markup.add(
         types.InlineKeyboardButton("🆔 Check ID", callback_data="check_id")
