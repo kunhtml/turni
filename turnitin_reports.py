@@ -2,6 +2,8 @@ import os
 import time
 import threading
 from datetime import datetime, timedelta
+import re
+from typing import Optional, Tuple
 
 def log(message: str):
     """Log a message with a timestamp to the terminal."""
@@ -578,6 +580,23 @@ def download_reports(page, chat_id, bot, original_filename=None):
         log(f"Error downloading reports: {e}")
         bot.send_message(chat_id, f"⚠️ Error downloading reports: {e}")
     
+    # Optionally upload to Filebin and send links
+    try:
+        links_msg_parts = []
+        if sim_filename and os.path.exists(sim_filename):
+            url = upload_file_to_filebin(sim_filename)
+            if url:
+                links_msg_parts.append(f"📄 Similarity: {url}")
+        if ai_filename and os.path.exists(ai_filename):
+            url = upload_file_to_filebin(ai_filename)
+            if url:
+                links_msg_parts.append(f"🤖 AI Writing: {url}")
+        if links_msg_parts:
+            bot.send_message(chat_id, "🔗 Filebin links:\n" + "\n".join(links_msg_parts))
+            log("Filebin links sent to user")
+    except Exception as link_err:
+        log(f"Filebin upload warning: {link_err}")
+
     # Send reports directly to Telegram as files
     try:
         reports_sent = 0
@@ -641,6 +660,92 @@ def download_reports(page, chat_id, bot, original_filename=None):
     }
     
     return submission_info
+
+
+def _guess_mime_type(path: str) -> str:
+    name = os.path.basename(path).lower()
+    if name.endswith('.pdf'):
+        return 'application/pdf'
+    if name.endswith('.doc'):
+        return 'application/msword'
+    if name.endswith('.docx'):
+        return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    return 'application/octet-stream'
+
+
+def upload_file_to_filebin(file_path: str) -> Optional[str]:
+    """Upload a file to filebin.net and return a shareable URL.
+
+    Tries multiple API patterns for compatibility:
+    1) Create bin via /api/bin then POST file to /api/bin/{bin}/files
+    2) PUT to /{bin}/{filename}
+    3) POST multipart directly to /
+    Returns the first URL found or None.
+    """
+    try:
+        import requests
+        timeout_short = 15
+        timeout_long = 60
+
+        # 1) Create a bin via API
+        try:
+            resp = requests.post('https://filebin.net/api/bin', timeout=timeout_short)
+            if resp.ok:
+                data = {}
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = {}
+                bin_id = data.get('name') or data.get('id') or data.get('bin')
+                if bin_id:
+                    files = {
+                        'file': (os.path.basename(file_path), open(file_path, 'rb'), _guess_mime_type(file_path))
+                    }
+                    resp2 = requests.post(f'https://filebin.net/api/bin/{bin_id}/files', files=files, timeout=timeout_long)
+                    if resp2.ok:
+                        try:
+                            j = resp2.json()
+                            # Try common keys for URL
+                            for key in ('url', 'fileUrl', 'file_url', 'href'):
+                                if key in j:
+                                    return j[key]
+                        except Exception:
+                            pass
+                        # Fallback: build a URL if format is standard
+                        return f'https://filebin.net/{bin_id}/{os.path.basename(file_path)}'
+        except Exception:
+            pass
+
+        # 2) PUT directly to a random bin/filename
+        try:
+            import random, string
+            bin_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=7))
+            with open(file_path, 'rb') as f:
+                resp = requests.put(f'https://filebin.net/{bin_id}/{os.path.basename(file_path)}', data=f, timeout=timeout_long)
+            if resp.ok or resp.status_code in (200, 201):
+                # Some instances return body text with the URL; otherwise construct it
+                m = re.search(r'https?://filebin\.net/\S+', resp.text)
+                return m.group(0) if m else f'https://filebin.net/{bin_id}/{os.path.basename(file_path)}'
+        except Exception:
+            pass
+
+        # 3) POST multipart to root and extract URL
+        try:
+            files = {
+                'file': (os.path.basename(file_path), open(file_path, 'rb'), _guess_mime_type(file_path))
+            }
+            resp = requests.post('https://filebin.net', files=files, timeout=timeout_long)
+            if resp.ok:
+                m = re.search(r'https?://filebin\.net/\S+', resp.text)
+                if m:
+                    return m.group(0)
+        except Exception:
+            pass
+
+        return None
+    except Exception as e:
+        log(f"upload_file_to_filebin error: {e}")
+        return None
 
 
 def send_reports_to_user(chat_id, bot, sim_filename, ai_filename, original_filename=None):
