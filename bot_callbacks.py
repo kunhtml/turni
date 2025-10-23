@@ -290,6 +290,8 @@ def handle_admin_callbacks(call, bot, ADMIN_TELEGRAM_ID, load_subscriptions,
         show_all_subscriptions(call, bot, load_subscriptions, create_admin_menu)
     elif call.data == "admin_pending":
         show_pending_requests(call, bot, load_pending_requests, create_admin_menu)
+    elif call.data == "admin_edit":
+        show_edit_subscription_menu(call, bot, create_admin_menu)
     elif call.data == "admin_history":
         show_admin_history_prompt(call, bot, create_admin_menu)
     elif call.data == "admin_stats":
@@ -308,7 +310,7 @@ def handle_admin_callbacks(call, bot, ADMIN_TELEGRAM_ID, load_subscriptions,
         )
 
 def show_all_subscriptions(call, bot, load_subscriptions, create_admin_menu):
-    """Show all active subscriptions to admin"""
+    """Show all active subscriptions to admin with detailed statistics"""
     subscriptions = load_subscriptions()
     
     if not subscriptions:
@@ -322,16 +324,69 @@ def show_all_subscriptions(call, bot, load_subscriptions, create_admin_menu):
         )
         return
     
-    subscription_text = "👥 <b>Active Subscriptions</b>\n\n"
+    # Count users by subscription type
+    time_based_users = 0
+    document_based_users = 0
+    monthly_users = 0
+    total_active = 0
+    
+    subscription_text = "👥 <b>Active Subscriptions Summary</b>\n\n"
     
     for user_id, user_data in subscriptions.items():
-        if "end_date" in user_data:
+        is_active = False
+        
+        # Check time-based subscription
+        if user_data.get("type") == "time" and "end_date" in user_data:
             end_date = datetime.fromisoformat(user_data["end_date"])
             if datetime.now() < end_date:
-                subscription_text += f"🆔 {user_id}\n📅 Until: {end_date.strftime('%Y-%m-%d')}\n📋 Plan: {user_data.get('plan_name', 'Unknown')}\n\n"
+                time_based_users += 1
+                is_active = True
         
+        # Check monthly subscription
+        elif "end_date" in user_data and user_data.get("type") != "time":
+            end_date = datetime.fromisoformat(user_data["end_date"])
+            if datetime.now() < end_date:
+                monthly_users += 1
+                is_active = True
+        
+        # Check document-based subscription
         if "documents_remaining" in user_data and user_data["documents_remaining"] > 0:
-            subscription_text += f"🆔 {user_id}\n📄 Docs: {user_data['documents_remaining']} remaining\n\n"
+            if not is_active:  # Don't double count
+                document_based_users += 1
+                is_active = True
+        
+        if is_active:
+            total_active += 1
+    
+    subscription_text += f"📊 <b>TỔNG SỐ NGƯỜI DÙNG ĐANG SỬ DỤNG:</b> <b>{total_active}</b>\n\n"
+    subscription_text += f"⏰ Time-based (Theo thời gian): {time_based_users} người\n"
+    subscription_text += f"📅 Monthly (Theo tháng): {monthly_users} người\n"
+    subscription_text += f"📄 Document-based (Theo lượt): {document_based_users} người\n\n"
+    subscription_text += "─────────────────────\n\n"
+    subscription_text += "<b>Chi tiết người dùng:</b>\n\n"
+    
+    # List individual users
+    for user_id, user_data in subscriptions.items():
+        user_type = user_data.get("type", "unknown")
+        
+        if user_type == "time" and "end_date" in user_data:
+            end_date = datetime.fromisoformat(user_data["end_date"])
+            if datetime.now() < end_date:
+                days_remaining = (end_date - datetime.now()).days
+                subscription_text += f"🆔 <code>{user_id}</code>\n"
+                subscription_text += f"📅 Time-based: {days_remaining} ngày còn lại\n"
+                subscription_text += f"⏰ Hết hạn: {end_date.strftime('%d/%m/%Y %H:%M')}\n\n"
+        
+        elif "end_date" in user_data and user_type != "time":
+            end_date = datetime.fromisoformat(user_data["end_date"])
+            if datetime.now() < end_date:
+                subscription_text += f"🆔 <code>{user_id}</code>\n"
+                subscription_text += f"📅 {user_data.get('plan_name', 'Monthly')}\n"
+                subscription_text += f"⏰ Hết hạn: {end_date.strftime('%d/%m/%Y')}\n\n"
+        
+        elif "documents_remaining" in user_data and user_data["documents_remaining"] > 0:
+            subscription_text += f"🆔 <code>{user_id}</code>\n"
+            subscription_text += f"📄 Docs: {user_data['documents_remaining']} lượt còn lại\n\n"
     
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="back_to_admin"))
@@ -340,7 +395,8 @@ def show_all_subscriptions(call, bot, load_subscriptions, create_admin_menu):
         subscription_text,
         call.message.chat.id,
         call.message.message_id,
-        reply_markup=markup
+        reply_markup=markup,
+        parse_mode='HTML'
     )
 
 def show_pending_requests(call, bot, load_pending_requests, create_admin_menu):
