@@ -686,7 +686,24 @@ def download_reports(page, chat_id, bot, original_filename=None):
         reports_sim = bool(sim_filename and os.path.exists(sim_filename))
         reports_ai = bool(ai_filename and os.path.exists(ai_filename))
         log(f"[{worker_name}] Reports downloaded - Similarity: {reports_sim}, AI: {reports_ai}")
-        bot.send_message(chat_id, "📤 Sending reports...")
+        
+        # Send score notification to user before uploading files
+        score_message = "📊 <b>Analysis Results / Kết quả phân tích</b>\n\n"
+        
+        if sim_badge and sim_available:
+            score_message += f"📄 <b>Similarity / Tương đồng:</b> {sim_badge}\n"
+        else:
+            score_message += f"📄 <b>Similarity / Tương đồng:</b> N/A\n"
+        
+        if ai_badge and ai_available:
+            score_message += f"🤖 <b>AI Writing / Viết bằng AI:</b> {ai_badge}\n"
+        else:
+            score_message += f"🤖 <b>AI Writing / Viết bằng AI:</b> N/A\n"
+        
+        score_message += f"\n📥 <b>Uploading reports to Telegram...</b>\n📥 <b>Đang tải báo cáo lên Telegram...</b>"
+        
+        bot.send_message(chat_id, score_message, parse_mode='HTML')
+        log(f"[{worker_name}] Sent scores to user - Similarity: {sim_badge}, AI: {ai_badge}")
         
     except Exception as e:
         log(f"[{worker_name}] Error downloading reports: {e}")
