@@ -73,15 +73,17 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
             log(f"[{worker_name}] Could not read headers: {header_debug_err}")
         
         try:
-            # Try clicking on the sorted column header to trigger sort and load data
+            # Try clicking on the PAPER ID column header (column 10) to sort by Paper ID
+            # PAPER ID column is at index 10, so we need th:nth-child(11) in CSS (1-indexed)
             sort_selectors = [
-                '#assign_inbox > div.ibox_body_wrapper.yui-skin-sam > table > tbody > tr.inbox_header > th.sorted_b',  # Exact selector
-                'th.sorted_b',                   # Sorted column header
-                'tr.inbox_header th a',          # Header link inside th
-                'tr.inbox_header th:nth-child(3) a',  # Paper ID column (usually 3rd)
-                'tr.inbox_header th',            # Any inbox header
-                'th a',                          # Header link
-                'a[href*="t_inbox.asp"]',        # Inbox navigation link
+                'tr.inbox_header th:nth-child(11) a',   # PAPER ID column (index 10, but nth-child is 1-indexed so 11)
+                'tr.inbox_header th:nth-child(11)',     # PAPER ID header without link
+                'tr.inbox_header th a',                 # Any header link (fallback)
+                'th.sorted_b',                          # Already sorted column
+                '#assign_inbox > div.ibox_body_wrapper.yui-skin-sam > table > tbody > tr.inbox_header > th.sorted_b',
+                'tr.inbox_header th',                   # Any inbox header
+                'th a',                                 # Header link
+                'a[href*="t_inbox.asp"]',               # Inbox navigation link
             ]
             
             sort_clicked = False
@@ -98,8 +100,8 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                     continue
             
             if sort_clicked and header_element:
-                # First click - sort ascending
-                log(f"[{worker_name}] First sort click (1/2)...")
+                # First click - sort ascending by PAPER ID
+                log(f"[{worker_name}] First sort click (1/2) - sorting by PAPER ID...")
                 header_element.click()
                 
                 # Wait for table to reload after first sort click
@@ -112,19 +114,38 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                 
                 time.sleep(1)
                 
-                # Second click - sort descending (newest first)
-                log(f"[{worker_name}] Second sort click (2/2)...")
-                header_element.click()
+                # Second click - sort descending by PAPER ID (newest PAPER ID first)
+                # IMPORTANT: Find the element again because DOM was refreshed
+                log(f"[{worker_name}] Second sort click (2/2) - reversing sort to show newest paper ID at top...")
                 
-                # Wait for table to reload after second sort click
-                try:
-                    page.wait_for_load_state('domcontentloaded', timeout=15000)
-                    page.wait_for_load_state('networkidle', timeout=15000)
-                    log(f"[{worker_name}] Table loaded after second sort click - newest submission should be at top")
-                except Exception as load_err:
-                    log(f"[{worker_name}] Load wait after second sort: {load_err}")
+                # Re-find the header element after page reload
+                header_element_2 = None
+                for sort_selector in sort_selectors:
+                    try:
+                        header_element_2 = page.query_selector(sort_selector)
+                        if header_element_2:
+                            log(f"[{worker_name}] Re-found header element: {sort_selector}")
+                            break
+                    except:
+                        continue
                 
-                time.sleep(1)
+                if header_element_2:
+                    header_element_2.click()
+                    # Wait for table to reload after second sort click
+                    try:
+                        page.wait_for_load_state('domcontentloaded', timeout=15000)
+                        page.wait_for_load_state('networkidle', timeout=15000)
+                        log(f"[{worker_name}] Table loaded after second sort click - submission with title '{submission_title}' should be near top")
+                    except Exception as load_err:
+                        log(f"[{worker_name}] Load wait after second sort: {load_err}")
+                    
+                    time.sleep(1)
+                else:
+                    log(f"[{worker_name}] Could not re-find header element for second click, continuing anyway")
+                    
+                    time.sleep(1)
+                else:
+                    log(f"[{worker_name}] Could not re-find header element for second click, continuing anyway")
             else:
                 log(f"[{worker_name}] Could not find header to sort, will search anyway")
                 
@@ -178,39 +199,46 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                         # Get all cells in this row
                         cells = row.query_selector_all("td")
                         if len(cells) > 0:
-                            # Debug: Log ALL cell contents to understand table structure
+                            # DEBUG: Log ALL cell contents to understand table structure
                             if row_idx < 3:
                                 cell_contents = []
-                                for cell_idx, cell in enumerate(cells[:5]):  # First 5 cells
-                                    cell_link = cell.query_selector("a")
-                                    if cell_link:
-                                        content = cell_link.inner_text().strip()
-                                    else:
-                                        content = cell.inner_text().strip()
-                                    if content:
-                                        cell_contents.append(f"[{cell_idx}]={content}")
+                                # Log cells based on header info: PAPER ID is at column 10
+                                # Show columns around where PAPER ID should be
+                                for cell_idx in [10, 11, 2]:  # Check column 10 (PAPER ID), 11 (DATE), 2 (TITLE)
+                                    if cell_idx < len(cells):
+                                        cell = cells[cell_idx]
+                                        cell_link = cell.query_selector("a")
+                                        if cell_link:
+                                            content = cell_link.inner_text().strip()
+                                        else:
+                                            content = cell.inner_text().strip()
+                                        if content:
+                                            cell_contents.append(f"[{cell_idx}]={content}")
                                 log(f"[{worker_name}] Row {row_idx} cells: {' | '.join(cell_contents)}")
                             
-                            # Find the title cell - it has class "ibox_title"
-                            # First try to find cell with ibox_title class
-                            title_cell = row.query_selector("td[class*='ibox_title']")
-                            if title_cell:
-                                # Get text from link inside title cell
-                                cell_link = title_cell.query_selector("a")
+                            # Find the PAPER ID - it's in column 10 (PAPER ID column)
+                            paper_id_text = ""
+                            if len(cells) > 10:
+                                # Column 10 is PAPER ID
+                                paper_id_cell = cells[10]
+                                cell_link = paper_id_cell.query_selector("a")
                                 if cell_link:
-                                    title_text = cell_link.inner_text().strip()
+                                    paper_id_text = cell_link.inner_text().strip()
                                 else:
-                                    title_text = title_cell.inner_text().strip()
-                            else:
-                                # Fallback: try first cell
-                                cell_link = cells[0].query_selector("a")
-                                if cell_link:
-                                    title_text = cell_link.inner_text().strip()
-                                else:
-                                    title_text = cells[0].inner_text().strip()
+                                    paper_id_text = paper_id_cell.inner_text().strip()
+                            
+                            # Fallback: try ibox_title class if column 10 didn't work
+                            if not paper_id_text:
+                                title_cell = row.query_selector("td[class*='ibox_title']")
+                                if title_cell:
+                                    cell_link = title_cell.query_selector("a")
+                                    if cell_link:
+                                        paper_id_text = cell_link.inner_text().strip()
+                                    else:
+                                        paper_id_text = title_cell.inner_text().strip()
                             
                             # Exact match instead of prefix match
-                            if title_text == submission_title:
+                            if paper_id_text == submission_title:
                                 log(f"[{worker_name}] Found exact match: {title_text}")
                                 
                                 # Click on this submission - need to click twice with page loads
