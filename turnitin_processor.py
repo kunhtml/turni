@@ -1,5 +1,6 @@
 import os
 import json
+import threading
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -28,12 +29,13 @@ def process_turnitin(file_path: str, chat_id: int, bot):
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     processing_messages = []
+    worker_name = threading.current_thread().name
     
     try:
         # Send initial message
         msg = bot.send_message(chat_id, "🚀 Starting Turnitin process...")
         processing_messages.append(msg.message_id)
-        log("Starting Turnitin process...")
+        log(f"[{worker_name}] Starting Turnitin process...")
 
         # Verify file exists
         if not os.path.exists(file_path):
@@ -41,7 +43,7 @@ def process_turnitin(file_path: str, chat_id: int, bot):
         
         # Get original filename
         original_filename = os.path.basename(file_path)
-        log(f"File verified: {file_path} (Size: {os.path.getsize(file_path)} bytes)")
+        log(f"[{worker_name}] File verified: {file_path} (Size: {os.path.getsize(file_path)} bytes)")
 
         # Get or create browser session (persistent)
         page = get_session_page()
@@ -49,13 +51,13 @@ def process_turnitin(file_path: str, chat_id: int, bot):
         if page is None:
             raise Exception("Failed to create browser session")
         
-        log(f"Browser session acquired, current URL: {page.url}")
+        log(f"[{worker_name}] Browser session acquired, current URL: {page.url}")
         
         # Navigate to Quick Submit - page is already there from login
-        log("Quick Submit page ready for submission")
+        log(f"[{worker_name}] Quick Submit page ready for submission")
 
         # Submit the document (pass the session page)
-        log("Starting document submission...")
+        log(f"[{worker_name}] Starting document submission...")
         from turnitin_auth import get_thread_browser_session
         browser_session = get_thread_browser_session()
         session_page = browser_session['page']
@@ -63,31 +65,31 @@ def process_turnitin(file_path: str, chat_id: int, bot):
         if session_page is None:
             raise Exception("Session page is None - browser session not initialized properly")
         
-        log(f"Session page verified, URL: {session_page.url}")
+        log(f"[{worker_name}] Session page verified, URL: {session_page.url}")
         actual_submission_title = submit_document(session_page, file_path, chat_id, timestamp, bot, processing_messages)
 
         # Find the submitted document
-        log("Finding submitted document...")
-        log(f"Submission title to search for: '{actual_submission_title}'")
+        log(f"[{worker_name}] Finding submitted document...")
+        log(f"[{worker_name}] Submission title to search for: '{actual_submission_title}'")
         page1 = find_submission_with_retry(session_page, actual_submission_title, chat_id, bot, processing_messages)
         
         if page1 is None:
-            log("Document not found, user will retry later")
+            log(f"[{worker_name}] Document not found, user will retry later")
             return  # Exit without closing browser
 
         # Download reports (handles downloading and sending to Telegram)
-        log("Downloading reports...")
+        log(f"[{worker_name}] Downloading reports...")
         try:
             submission_info = download_reports_with_retry(page1, chat_id, bot, original_filename)
         except TypeError as e:
             if "'dict' object has no attribute" in str(e) or "has no attribute 'url'" in str(e):
-                log(f"Page object error: {e} - this means find_submission returned wrong type")
+                log(f"[{worker_name}] Page object error: {e} - this means find_submission returned wrong type")
                 bot.send_message(chat_id, "❌ Internal error: submission page error")
                 return
             raise
         
         if not submission_info or not submission_info.get('reports_available'):
-            log("Download failed, user will retry later")
+            log(f"[{worker_name}] Download failed, user will retry later")
             return  # Exit without closing browser
 
         # Reports are already sent by download_reports_with_retry
@@ -97,16 +99,16 @@ def process_turnitin(file_path: str, chat_id: int, bot):
                 for f in os.listdir("downloads"):
                     if f"similarity_{chat_id}" in f or f"ai_{chat_id}" in f:
                         os.remove(f"downloads/{f}")
-                        log(f"Cleaned up {f}")
+                        log(f"[{worker_name}] Cleaned up {f}")
         except Exception as cleanup_err:
-            log(f"Cleanup warning: {cleanup_err}")
+            log(f"[{worker_name}] Cleanup warning: {cleanup_err}")
         
         # Close only the submission page (page1), keep main session
         try:
             page1.close()
-            log("Closed submission page, keeping main session active")
+            log(f"[{worker_name}] Closed submission page, keeping main session active")
         except Exception as close_error:
-            log(f"Error closing submission page: {close_error}")
+            log(f"[{worker_name}] Error closing submission page: {close_error}")
 
         # Navigate to assignment inbox for next request
         try:
@@ -120,23 +122,23 @@ def process_turnitin(file_path: str, chat_id: int, bot):
                 if 'aid=' in current_url:
                     aid_part = current_url.split('aid=')[1].split('&')[0]
                     inbox_url = f"https://www.turnitin.com/t_inbox.asp?lang=en_us&aid={aid_part}"
-                    log(f"Using extracted assignment ID: {aid_part}")
+                    log(f"[{worker_name}] Using extracted assignment ID: {aid_part}")
                 else:
                     inbox_url = "https://www.turnitin.com/t_inbox.asp?lang=en_us&aid=quicksubmit"
-                    log("Using default assignment ID: quicksubmit")
+                    log(f"[{worker_name}] Using default assignment ID: quicksubmit")
             except Exception:
                 inbox_url = "https://www.turnitin.com/t_inbox.asp?lang=en_us&aid=quicksubmit"
-                log("Using fallback assignment ID: quicksubmit")
+                log(f"[{worker_name}] Using fallback assignment ID: quicksubmit")
 
             # Navigate to assignment inbox for the next document
             main_page.goto(inbox_url, timeout=30000)
             main_page.wait_for_load_state('networkidle', timeout=20000)
-            log("Navigated to assignment inbox for next request")
+            log(f"[{worker_name}] Navigated to assignment inbox for next request")
 
         except Exception as inbox_error:
-            log(f"Error navigating to inbox: {inbox_error}")
+            log(f"[{worker_name}] Error navigating to inbox: {inbox_error}")
 
-        log("Turnitin process complete. Browser session maintained for next request.")
+        log(f"[{worker_name}] Turnitin process complete. Browser session maintained for next request.")
         
         # Return submission info with actual title
         return {
@@ -156,19 +158,19 @@ def process_turnitin(file_path: str, chat_id: int, bot):
                 pass
         
         bot.send_message(chat_id, f"❌ {error_msg}")
-        log(f"ERROR: {error_msg}")
+        log(f"[{worker_name}] ERROR: {error_msg}")
         
         # Clean up files
         try:
             if os.path.exists(file_path):
                 os.remove(file_path)
-                log(f"Cleaned up uploaded file")
+                log(f"[{worker_name}] Cleaned up uploaded file")
         except Exception as cleanup_error:
-            log(f"Cleanup error: {cleanup_error}")
+            log(f"[{worker_name}] Cleanup error: {cleanup_error}")
         
         # On critical errors, reset browser session
         if "browser" in str(e).lower() or "page" in str(e).lower():
-            log("Critical browser error detected, resetting session")
+            log(f"[{worker_name}] Critical browser error detected, resetting session")
             cleanup_browser_session()
 
 def shutdown_browser_session():

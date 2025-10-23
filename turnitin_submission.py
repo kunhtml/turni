@@ -1,6 +1,7 @@
 import os
 import time
 import random
+import threading
 from datetime import datetime
 
 def log(message: str):
@@ -19,32 +20,34 @@ from turnitin_auth import navigate_to_quick_submit
 
 def submit_document(page, file_path, chat_id, timestamp, bot, processing_messages):
     """Handle document submission process - Optimized version"""
+    worker_name = threading.current_thread().name
+    
     # Ensure we have a live session page (recover if previous viewer popup was closed)
     try:
         if page is None or (hasattr(page, 'is_closed') and page.is_closed()):
-            log("Session page is closed or None; reacquiring and navigating to Quick Submit...")
+            log(f"[{worker_name}] [{worker_name}] Session page is closed or None; reacquiring and navigating to Quick Submit...")
             page = get_session_page()
             try:
                 navigate_to_quick_submit()
             except Exception as nav_err:
-                log(f"navigate_to_quick_submit error during recovery: {nav_err}")
+                log(f"[{worker_name}] [{worker_name}] navigate_to_quick_submit error during recovery: {nav_err}")
             try:
                 page.wait_for_load_state('domcontentloaded', timeout=30000)
                 page.wait_for_load_state('networkidle', timeout=30000)
             except Exception:
                 pass
     except Exception as recover_err:
-        log(f"Recovery check failed (continuing): {recover_err}")
+        log(f"[{worker_name}] [{worker_name}] Recovery check failed (continuing): {recover_err}")
 
     # Wait for page to load
     try:
         page.wait_for_load_state('domcontentloaded', timeout=30000)  # Wait for DOM only
     except Exception as wait_error:
-        log(f"Wait for load state timeout (continuing anyway): {wait_error}")
+        log(f"[{worker_name}] [{worker_name}] Wait for load state timeout (continuing anyway): {wait_error}")
     random_wait(2, 3)
     
     # Click Submit button with multiple selectors
-    log("Clicking Submit button...")
+    log(f"[{worker_name}] [{worker_name}] Clicking Submit button...")
 
     submit_selectors = [
         'a.matte_button.submit_paper_button',    # Current working selector
@@ -57,14 +60,14 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
     submit_clicked = False
     for selector in submit_selectors:
         try:
-            log(f"Trying Submit button selector: {selector}")
+            log(f"[{worker_name}] Trying Submit button selector: {selector}")
             page.wait_for_selector(selector, timeout=15000)
             page.click(selector)
-            log(f"Submit button clicked successfully with selector: {selector}")
+            log(f"[{worker_name}] Submit button clicked successfully with selector: {selector}")
             submit_clicked = True
             break
         except Exception as selector_error:
-            log(f"Submit selector {selector} failed: {selector_error}")
+            log(f"[{worker_name}] Submit selector {selector} failed: {selector_error}")
             continue
 
     if not submit_clicked:
@@ -73,11 +76,11 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
     random_wait(2, 3)
 
     # Configure submission settings (simplified)
-    log("Configuring submission settings...")
+    log(f"[{worker_name}] Configuring submission settings...")
     try:
         page.wait_for_load_state('domcontentloaded', timeout=30000)  # Wait for DOM only
     except Exception as wait_error:
-        log(f"Wait for load state timeout (continuing anyway): {wait_error}")
+        log(f"[{worker_name}] Wait for load state timeout (continuing anyway): {wait_error}")
     random_wait(2, 3)
     
     # Configure search options and repository settings
@@ -94,34 +97,34 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
                 checkbox = page.locator(option['selector'])
                 if checkbox.count() > 0 and not checkbox.is_checked():
                     checkbox.check()
-                    log(f"Checked: {option['name']}")
+                    log(f"[{worker_name}] Checked: {option['name']}")
             except Exception as checkbox_error:
-                log(f"Error with checkbox {option['name']}: {checkbox_error}")
+                log(f"[{worker_name}] Error with checkbox {option['name']}: {checkbox_error}")
 
         # Ensure Army Institute checkbox is NOT checked
         try:
             army_checkbox = page.locator('input[name="compare_to_database"][value="100"]')
             if army_checkbox.count() > 0 and army_checkbox.is_checked():
                 army_checkbox.uncheck()
-                log("Unchecked: Army Institute checkbox")
+                log(f"[{worker_name}] Unchecked: Army Institute checkbox")
         except Exception as army_error:
-            log(f"Error with Army Institute checkbox: {army_error}")
+            log(f"[{worker_name}] Error with Army Institute checkbox: {army_error}")
 
         # Set repository option to "no repository" (value="0")
         try:
             repository_select = page.locator('select[name="submit_papers_to"]')
             if repository_select.count() > 0:
                 repository_select.select_option("0")  # "no repository"
-                log("Selected: no repository option")
+                log(f"[{worker_name}] Selected: no repository option")
         except Exception as repo_error:
-            log(f"Error setting repository option: {repo_error}")
+            log(f"[{worker_name}] Error setting repository option: {repo_error}")
 
-        log("All submission settings configured successfully")
+        log(f"[{worker_name}] All submission settings configured successfully")
     except Exception as e:
-        log(f"Error configuring settings: {e}")
+        log(f"[{worker_name}] Error configuring settings: {e}")
 
     # Click Submit to proceed with multiple selectors
-    log("Clicking Submit to proceed...")
+    log(f"[{worker_name}] Clicking Submit to proceed...")
 
     proceed_selectors = [
         'input[type="submit"][value="Submit"]',     # Exact match from HTML
@@ -134,14 +137,14 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
     proceed_clicked = False
     for selector in proceed_selectors:
         try:
-            log(f"Trying Submit proceed selector: {selector}")
+            log(f"[{worker_name}] Trying Submit proceed selector: {selector}")
             page.wait_for_selector(selector, timeout=15000)
             page.click(selector)
-            log(f"Submit proceed clicked successfully with selector: {selector}")
+            log(f"[{worker_name}] Submit proceed clicked successfully with selector: {selector}")
             proceed_clicked = True
             break
         except Exception as selector_error:
-            log(f"Submit proceed selector {selector} failed: {selector_error}")
+            log(f"[{worker_name}] Submit proceed selector {selector} failed: {selector_error}")
             continue
 
     if not proceed_clicked:
@@ -150,7 +153,7 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
     random_wait(2, 3)
 
     # Fill submission details
-    log("Filling submission details...")
+    log(f"[{worker_name}] Filling submission details...")
     page.wait_for_selector('#author_first', timeout=15000)
 
     # Fill names as requested: "Bot" and "Checker"
@@ -168,10 +171,10 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
     submission_title = f"{day}{hour}{minute}{unique_id}"  # Max 11 characters
 
     page.fill('#title', submission_title)
-    log(f"Form filled - Author: Bot Checker, Title: {submission_title}")
+    log(f"[{worker_name}] Form filled - Author: Bot Checker, Title: {submission_title}")
 
     # Upload file with improved error handling
-    log(f"Uploading file from path: {file_path}")
+    log(f"[{worker_name}] Uploading file from path: {file_path}")
     msg = bot.send_message(chat_id, "📎 Uploading document...")
     processing_messages.append(msg.message_id)
 
@@ -182,19 +185,19 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
         page.click("#choose-file-btn")
         random_wait(1, 2)
     except Exception as btn_error:
-        log(f"Choose file button click failed: {btn_error}")
+        log(f"[{worker_name}] Choose file button click failed: {btn_error}")
 
     # Upload file directly to input element
     try:
         page.locator("#selected-file").set_input_files(file_path)
-        log("File selected successfully")
+        log(f"[{worker_name}] File selected successfully")
         random_wait(2, 3)
     except Exception as upload_error:
-        log(f"File upload error: {upload_error}")
+        log(f"[{worker_name}] File upload error: {upload_error}")
         raise Exception(f"Could not upload file: {upload_error}")
 
     # Click Upload button with multiple selectors
-    log("Clicking Upload button...")
+    log(f"[{worker_name}] Clicking Upload button...")
 
     upload_selectors = [
         '#upload-btn',                          # ID selector from HTML
@@ -207,21 +210,21 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
     upload_clicked = False
     for selector in upload_selectors:
         try:
-            log(f"Trying Upload button selector: {selector}")
+            log(f"[{worker_name}] Trying Upload button selector: {selector}")
             page.wait_for_selector(selector, timeout=15000)
             page.click(selector)
-            log(f"Upload button clicked successfully with selector: {selector}")
+            log(f"[{worker_name}] Upload button clicked successfully with selector: {selector}")
             upload_clicked = True
             break
         except Exception as selector_error:
-            log(f"Upload selector {selector} failed: {selector_error}")
+            log(f"[{worker_name}] Upload selector {selector} failed: {selector_error}")
             continue
 
     if not upload_clicked:
         raise Exception("Could not find Upload button with any selector")
     
     # Wait for processing and metadata extraction
-    log("Waiting for processing and confirmation banner...")
+    log(f"[{worker_name}] Waiting for processing and confirmation banner...")
     msg = bot.send_message(chat_id, "📊 Processing document...")
     processing_messages.append(msg.message_id)
 
@@ -230,25 +233,25 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
     file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
     if file_size_mb > 30:
         wait_timeout = 180000  # 3 minutes for large files
-        log(f"Large file detected ({file_size_mb:.2f} MB), using extended timeout: {wait_timeout/1000}s")
+        log(f"[{worker_name}] Large file detected ({file_size_mb:.2f} MB), using extended timeout: {wait_timeout/1000}s")
     else:
         wait_timeout = 90000  # 90 seconds for normal files
     
     try:
         # Wait for state-confirm to be visible (not just present)
         page.wait_for_selector('.state-confirm', state='visible', timeout=wait_timeout)
-        log("Confirmation banner appeared")
+        log(f"[{worker_name}] Confirmation banner appeared")
     except Exception as banner_error:
-        log(f"Banner wait failed: {banner_error}")
+        log(f"[{worker_name}] Banner wait failed: {banner_error}")
         # Try alternative: wait for confirm button instead
         try:
             page.wait_for_selector('#confirm-btn', state='visible', timeout=30000)
-            log("Confirm button appeared (alternative check)")
+            log(f"[{worker_name}] Confirm button appeared (alternative check)")
         except Exception as btn_error:
-            log(f"Confirm button wait also failed: {btn_error}")
+            log(f"[{worker_name}] Confirm button wait also failed: {btn_error}")
 
     # Wait for confirm button to be enabled (not disabled)
-    log("Waiting for confirm button to be enabled...")
+    log(f"[{worker_name}] Waiting for confirm button to be enabled...")
     confirm_button_enabled = False
     for attempt in range(60):  # Try for up to 60 seconds (increased from 30)
         try:
@@ -257,7 +260,7 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
                 is_disabled = confirm_btn.get_attribute('disabled')
                 if is_disabled is None:  # Not disabled
                     confirm_button_enabled = True
-                    log("Confirm button is now enabled")
+                    log(f"[{worker_name}] Confirm button is now enabled")
                     break
             time.sleep(1)
         except Exception:
@@ -265,7 +268,7 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
             continue
 
     if not confirm_button_enabled:
-        log("Warning: Confirm button may still be disabled, but continuing...")
+        log(f"[{worker_name}] Warning: Confirm button may still be disabled, but continuing...")
 
     # Extract metadata with comprehensive error handling
     try:
@@ -318,8 +321,8 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
         except:
             submission_id = "Unknown"
         
-        log(f"Submission metadata - Title: {actual_submission_title}, Pages: {page_count}, Words: {word_count}, Characters: {character_count}")
-        log(f"Submission details - Date: {submission_date}, ID: {submission_id}")
+        log(f"[{worker_name}] Submission metadata - Title: {actual_submission_title}, Pages: {page_count}, Words: {word_count}, Characters: {character_count}")
+        log(f"[{worker_name}] Submission details - Date: {submission_date}, ID: {submission_id}")
 
         # Send comprehensive metadata to user
         import html
@@ -360,17 +363,17 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
             'words': word_count,
             'characters': character_count
         }
-        log(f"Submission details stored: {submission_details}")
+        log(f"[{worker_name}] Submission details stored: {submission_details}")
         
     except Exception as metadata_error:
-        log(f"Could not extract metadata: {metadata_error}")
+        log(f"[{worker_name}] Could not extract metadata: {metadata_error}")
         actual_submission_title = submission_title
         # Send generic verification message
         verify_msg = bot.send_message(chat_id, "✅ <b>Document Verified</b>\n\n🚀 Submitting to Turnitin...")
         processing_messages.append(verify_msg.message_id)
 
     # Click Confirm button with multiple selectors
-    log("Clicking Confirm button...")
+    log(f"[{worker_name}] Clicking Confirm button...")
 
     confirm_selectors = [
         '#confirm-btn',                         # ID selector from HTML
@@ -382,21 +385,21 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
     confirm_clicked = False
     for selector in confirm_selectors:
         try:
-            log(f"Trying Confirm button selector: {selector}")
+            log(f"[{worker_name}] Trying Confirm button selector: {selector}")
             page.wait_for_selector(selector, timeout=15000)
             page.click(selector)
-            log(f"Confirm button clicked successfully with selector: {selector}")
+            log(f"[{worker_name}] Confirm button clicked successfully with selector: {selector}")
             confirm_clicked = True
             break
         except Exception as selector_error:
-            log(f"Confirm selector {selector} failed: {selector_error}")
+            log(f"[{worker_name}] Confirm selector {selector} failed: {selector_error}")
             continue
 
     if not confirm_clicked:
         raise Exception("Could not find Confirm button with any selector")
 
     # Wait for digital receipt confirmation message
-    log("Waiting for submission confirmation message...")
+    log(f"[{worker_name}] Waiting for submission confirmation message...")
     msg = bot.send_message(chat_id, "⏳ Document submitted, waiting for confirmation...")
     processing_messages.append(msg.message_id)
     
@@ -412,7 +415,7 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
             if confirmation_element:
                 confirmation_text = confirmation_element.inner_text().strip()
                 if "Congratulations" in confirmation_text and "submission is complete" in confirmation_text:
-                    log(f"✅ Found confirmation message: {confirmation_text}")
+                    log(f"[{worker_name}] ✅ Found confirmation message: {confirmation_text}")
                     confirmation_found = True
                     break
         except Exception as check_error:
@@ -421,27 +424,27 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
         if not confirmation_found:
             time.sleep(check_interval)
             if (attempt + 1) % 10 == 0:  # Log every 10 attempts
-                log(f"Still waiting for confirmation... (attempt {attempt + 1}/{max_check_attempts})")
+                log(f"[{worker_name}] Still waiting for confirmation... (attempt {attempt + 1}/{max_check_attempts})")
     
     if not confirmation_found:
-        log("⚠️ Warning: Could not find confirmation message, but continuing...")
+        log(f"[{worker_name}] ⚠️ Warning: Could not find confirmation message, but continuing...")
     
     # Navigate to Quick Submit page immediately after confirmation
-    log("Navigating to Quick Submit page...")
+    log(f"[{worker_name}] Navigating to Quick Submit page...")
     try:
         navigate_to_quick_submit()
-        log("✅ Quick Submit page loaded successfully")
+        log(f"[{worker_name}] ✅ Quick Submit page loaded successfully")
     except Exception as quick_submit_err:
-        log(f"Error navigating to Quick Submit: {quick_submit_err}")
+        log(f"[{worker_name}] Error navigating to Quick Submit: {quick_submit_err}")
         raise
     
     # Wait for Quick Submit page to fully load
     try:
         page.wait_for_load_state('domcontentloaded', timeout=30000)
         page.wait_for_load_state('networkidle', timeout=30000)
-        log("Quick Submit page fully loaded, ready to search for submission")
+        log(f"[{worker_name}] Quick Submit page fully loaded, ready to search for submission")
     except Exception as load_err:
-        log(f"Quick Submit page load warning: {load_err}")
+        log(f"[{worker_name}] Quick Submit page load warning: {load_err}")
     
     # Small buffer before returning to allow page to stabilize
     page.wait_for_timeout(2000)  # 2 seconds buffer

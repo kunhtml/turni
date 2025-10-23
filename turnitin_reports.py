@@ -316,46 +316,51 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                                                     log(f"[{worker_name}] Detected viewer URL after double click: {current_after_click}")
                                                     return page
                                                 else:
+                                                    # Double-click didn't navigate to viewer
+                                                    # Try clicking Similarity report link - first with popup, then same-tab
                                                     try:
                                                         report_link = row.query_selector("td.or_report_cell .or_full_version a, td.or_report_cell a.or-link")
                                                         if report_link:
-                                                            with page.expect_popup(timeout=5000) as popup_info2:
-                                                                log(f"[{worker_name}] Double-click did not navigate; opening Similarity report link via popup...")
+                                                            log(f"[{worker_name}] Double-click did not navigate; trying Similarity report link...")
+                                                            # First try with popup
+                                                            try:
+                                                                with page.expect_popup(timeout=5000) as popup_info2:
+                                                                    report_link.click()
+                                                                new_page2 = popup_info2.value
+                                                                try:
+                                                                    new_page2.wait_for_load_state('domcontentloaded', timeout=30000)
+                                                                except Exception:
+                                                                    pass
+                                                                try:
+                                                                    new_page2.wait_for_load_state('networkidle', timeout=30000)
+                                                                except Exception:
+                                                                    pass
+                                                                time.sleep(2)
+                                                                random_wait(1, 2)
+                                                                log(f"[{worker_name}] Opened viewer from Similarity report link via popup")
+                                                                return new_page2
+                                                            except Exception as popup_err:
+                                                                log(f"[{worker_name}] Popup failed for Similarity link: {popup_err}, trying same-tab navigation...")
+                                                                # Popup failed, try same-tab navigation
                                                                 report_link.click()
-                                                            new_page2 = popup_info2.value
-                                                            try:
-                                                                new_page2.wait_for_load_state('domcontentloaded', timeout=30000)
-                                                            except Exception:
-                                                                pass
-                                                            try:
-                                                                new_page2.wait_for_load_state('networkidle', timeout=30000)
-                                                            except Exception:
-                                                                pass
-                                                            time.sleep(2)
-                                                            random_wait(1, 2)
-                                                            log(f"[{worker_name}] Opened viewer from Similarity report link successfully")
-                                                            return new_page2
+                                                                try:
+                                                                    page.wait_for_url(lambda url: 'ev.turnitin.com/app/carta' in url, timeout=15000)
+                                                                    log(f"[{worker_name}] Viewer URL detected in same tab")
+                                                                except Exception:
+                                                                    pass
+                                                                # Wait for viewer components to appear
+                                                                try:
+                                                                    page.wait_for_selector('tii-sws-submission-workspace, tii-sws-header', timeout=15000)
+                                                                    log(f"[{worker_name}] Viewer opened in same tab via Similarity link")
+                                                                    return page
+                                                                except Exception as comp_err:
+                                                                    log(f"[{worker_name}] Viewer components not found: {comp_err}")
                                                         else:
                                                             log(f"[{worker_name}] Could not find Similarity report link in row for fallback")
                                                     except Exception as link_err:
-                                                        log(f"[{worker_name}] Error opening Similarity report link: {link_err}")
-                                                    # Try same-tab navigation as a fallback (no popup)
-                                                    try:
-                                                        link.click()
-                                                        try:
-                                                            page.wait_for_url(lambda url: 'ev.turnitin.com/app/carta' in url, timeout=15000)
-                                                        except Exception:
-                                                            pass
-                                                        # Or detect viewer components loaded in same tab
-                                                        try:
-                                                            page.wait_for_selector('tii-sws-submission-workspace, tii-sws-header', timeout=15000)
-                                                            log(f"[{worker_name}] Viewer opened in same tab via Similarity link")
-                                                            return page
-                                                        except Exception:
-                                                            pass
-                                                    except Exception:
-                                                        pass
-                                                    # As a last resort, indicate failure so caller won't proceed on inbox page
+                                                        log(f"[{worker_name}] Error with Similarity report link: {link_err}")
+                                                    # Last resort: return None so we don't proceed with inbox page
+                                                    log(f"[{worker_name}] All viewer open attempts failed, returning None")
                                                     return None
                                             else:
                                                 log(f"[{worker_name}] Error: Title link not found for second click")

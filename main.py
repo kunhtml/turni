@@ -582,6 +582,18 @@ def process_user_document(message):
         
         log(f"Saved document to {file_path} ({os.path.getsize(file_path)} bytes)")
         
+        # Send immediate acknowledgement to user
+        size_mb = file_size / (1024 * 1024)
+        receipt_message = (
+            f"✅ <b>File Received!</b>\n\n"
+            f"📁 <b>Filename:</b> {original_filename}\n"
+            f"📊 <b>Size:</b> {size_mb:.2f} MB\n\n"
+            f"⏳ <b>Please wait while we process your document...</b>\n\n"
+            f"💡 <i>Larger files may take longer to process</i>"
+        )
+        bot.send_message(message.chat.id, receipt_message)
+        log(f"Sent file receipt confirmation to user {message.chat.id}")
+        
         # Add to processing queue
         queue_item = {
             'user_id': message.chat.id,
@@ -1196,10 +1208,8 @@ def handle_document(message):
         save_subscriptions(subscriptions)
         
         remaining = user_data["documents_remaining"]
-        bot.reply_to(message, f"📄 Processing document... ({remaining} documents remaining)")
-        log(f"User {user_id} documents_remaining updated to {remaining}")
+        log(f"User {user_id} documents_remaining updated to {remaining} (document-based subscription)")
     else:
-        bot.reply_to(message, "📄 Processing your document...")
         log(f"User {user_id} time-based subscription - proceeding to process")
     
     # Process the document
