@@ -13,13 +13,29 @@ def random_wait(min_seconds=2, max_seconds=4):
     wait_time = random.uniform(min_seconds, max_seconds)
     time.sleep(wait_time)
 
-from turnitin_auth import navigate_to_quick_submit
+from turnitin_auth import navigate_to_quick_submit, get_session_page
 
 from turnitin_auth import navigate_to_quick_submit
 
 def submit_document(page, file_path, chat_id, timestamp, bot, processing_messages):
     """Handle document submission process - Optimized version"""
-    
+    # Ensure we have a live session page (recover if previous viewer popup was closed)
+    try:
+        if page is None or (hasattr(page, 'is_closed') and page.is_closed()):
+            log("Session page is closed or None; reacquiring and navigating to Quick Submit...")
+            page = get_session_page()
+            try:
+                navigate_to_quick_submit()
+            except Exception as nav_err:
+                log(f"navigate_to_quick_submit error during recovery: {nav_err}")
+            try:
+                page.wait_for_load_state('domcontentloaded', timeout=30000)
+                page.wait_for_load_state('networkidle', timeout=30000)
+            except Exception:
+                pass
+    except Exception as recover_err:
+        log(f"Recovery check failed (continuing): {recover_err}")
+
     # Wait for page to load
     try:
         page.wait_for_load_state('domcontentloaded', timeout=30000)  # Wait for DOM only
