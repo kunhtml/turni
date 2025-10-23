@@ -2,8 +2,6 @@ import os
 import time
 import threading
 from datetime import datetime, timedelta
-import re
-from typing import Optional, Tuple
 
 def log(message: str):
     """Log a message with a timestamp to the terminal."""
