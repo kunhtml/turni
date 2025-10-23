@@ -59,21 +59,22 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
         # This ensures the table data is fully loaded and sorted
         log(f"[{worker_name}] Triggering table sort/refresh...")
         try:
-            # Try clicking on table header to trigger sort and load data
+            # Try clicking on the sorted column header to trigger sort and load data
             sort_selectors = [
-                'th a',                           # Header link
+                '#assign_inbox > div.ibox_body_wrapper.yui-skin-sam > table > tbody > tr.inbox_header > th.sorted_b',  # Exact selector
+                'th.sorted_b',                   # Sorted column header
+                'tr.inbox_header th',            # Any inbox header
+                'th a',                          # Header link
                 'a[href*="t_inbox.asp"]',        # Inbox navigation link
-                'table th a',                    # Specific table header
-                'a[title*="Paper"]',             # Paper ID header
             ]
             
             sort_clicked = False
             for sort_selector in sort_selectors:
                 try:
-                    header_link = page.query_selector(sort_selector)
-                    if header_link:
-                        log(f"[{worker_name}] Found header link, clicking to trigger sort...")
-                        header_link.click()
+                    header_element = page.query_selector(sort_selector)
+                    if header_element:
+                        log(f"[{worker_name}] Found header element: {sort_selector}")
+                        header_element.click()
                         sort_clicked = True
                         
                         # Wait for table to reload after sort click
@@ -87,6 +88,7 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                         time.sleep(1)
                         break
                 except Exception as header_err:
+                    log(f"[{worker_name}] Sort selector '{sort_selector}' error: {header_err}")
                     continue
             
             if not sort_clicked:
