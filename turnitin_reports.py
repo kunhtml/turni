@@ -56,8 +56,9 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
         time.sleep(2)
 
         # Sort/refresh the table by clicking on a column header (like Paper ID)
-        # This ensures the table data is fully loaded and sorted
-        log(f"[{worker_name}] Triggering table sort/refresh...")
+        # Purpose: Load and populate table data, and sort TWICE to show NEWEST submission at TOP (row 0)
+        # The table needs to be clicked twice to reverse sort order and put latest submission first
+        log(f"[{worker_name}] Triggering table sort/refresh (2 clicks)...")
         try:
             # Try clicking on the sorted column header to trigger sort and load data
             sort_selectors = [
@@ -69,29 +70,47 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
             ]
             
             sort_clicked = False
+            header_element = None
             for sort_selector in sort_selectors:
                 try:
                     header_element = page.query_selector(sort_selector)
                     if header_element:
                         log(f"[{worker_name}] Found header element: {sort_selector}")
-                        header_element.click()
                         sort_clicked = True
-                        
-                        # Wait for table to reload after sort click
-                        try:
-                            page.wait_for_load_state('domcontentloaded', timeout=15000)
-                            page.wait_for_load_state('networkidle', timeout=15000)
-                            log(f"[{worker_name}] Table loaded after sort click")
-                        except Exception as load_err:
-                            log(f"[{worker_name}] Load wait after sort: {load_err}")
-                        
-                        time.sleep(1)
                         break
                 except Exception as header_err:
                     log(f"[{worker_name}] Sort selector '{sort_selector}' error: {header_err}")
                     continue
             
-            if not sort_clicked:
+            if sort_clicked and header_element:
+                # First click - sort ascending
+                log(f"[{worker_name}] First sort click (1/2)...")
+                header_element.click()
+                
+                # Wait for table to reload after first sort click
+                try:
+                    page.wait_for_load_state('domcontentloaded', timeout=15000)
+                    page.wait_for_load_state('networkidle', timeout=15000)
+                    log(f"[{worker_name}] Table loaded after first sort click")
+                except Exception as load_err:
+                    log(f"[{worker_name}] Load wait after first sort: {load_err}")
+                
+                time.sleep(1)
+                
+                # Second click - sort descending (newest first)
+                log(f"[{worker_name}] Second sort click (2/2)...")
+                header_element.click()
+                
+                # Wait for table to reload after second sort click
+                try:
+                    page.wait_for_load_state('domcontentloaded', timeout=15000)
+                    page.wait_for_load_state('networkidle', timeout=15000)
+                    log(f"[{worker_name}] Table loaded after second sort click - newest submission should be at top")
+                except Exception as load_err:
+                    log(f"[{worker_name}] Load wait after second sort: {load_err}")
+                
+                time.sleep(1)
+            else:
                 log(f"[{worker_name}] Could not find header to sort, will search anyway")
                 
         except Exception as sort_error:
@@ -134,6 +153,10 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                             log(f"[{worker_name}] Table structure: {len(first_cells)} columns in first row")
                     except:
                         pass
+                
+                # OPTIMIZATION: After sort, newest submission is at row 0
+                # Try row 0 first (most likely match after sort), then continue with others
+                rows_to_check = rows  # Check all rows but row 0 first
                 
                 for row_idx, row in enumerate(rows):
                     try:
