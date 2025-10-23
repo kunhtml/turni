@@ -47,7 +47,7 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
 
         # If not on inbox page, navigate to it
         if 't_inbox.asp' not in current_url:
-            log("Not on inbox page, navigating to assignment inbox...")
+            log(f"[{worker_name}] Not on inbox page, navigating to assignment inbox...")
             page.goto("https://www.turnitin.com/t_assignments.asp")
             time.sleep(3)
 
@@ -383,7 +383,10 @@ def download_reports(page, chat_id, bot, original_filename=None):
     """Download Similarity and AI Writing reports as PDF files"""
     import time
     import random
+    import threading
     from datetime import datetime
+    
+    worker_name = threading.current_thread().name
     
     # Validate page object
     if not hasattr(page, 'url') or not hasattr(page, 'wait_for_selector'):
@@ -395,7 +398,7 @@ def download_reports(page, chat_id, bot, original_filename=None):
     try:
         # Check if we're on the reports page (Turnitin viewer)
         current_url = page.url
-        log(f"Current page URL: {current_url}")
+        log(f"[{worker_name}] Current page URL: {current_url}")
         
         # Guard: ensure this is the viewer, not the inbox
         try:
@@ -406,13 +409,13 @@ def download_reports(page, chat_id, bot, original_filename=None):
             raise RuntimeError("Not on Turnitin viewer page; cannot download reports")
         
         # Download Similarity Report
-        log("Downloading reports...")
+        log(f"[{worker_name}] Downloading reports...")
         
         try:
             # Wait for a download affordance to appear in the viewer toolbar
             page.wait_for_selector("a[title*='Download' i], button[aria-label*='Download' i], .tii-sws-download-btn-mfe", timeout=20000)
         except:
-            log("Download button not found, waiting...")
+            log(f"[{worker_name}] Download button not found, waiting...")
             time.sleep(5)
         
         # Downloading reports...
@@ -435,14 +438,14 @@ def download_reports(page, chat_id, bot, original_filename=None):
             pass
         
         # Checking Similarity and AI badges in viewer (web components)
-        log("Checking AI/Similarity badges for document validation...")
+        log(f"[{worker_name}] Checking AI/Similarity badges for document validation...")
         try:
             # Similarity badge (Tab 1)
             sim_badge = page.query_selector("tii-sws-submission-workspace tii-sws-tab-navigator tii-sws-tab-button:nth-of-type(1) tdl-badge, tii-sws-tab-navigator tii-sws-tab-button:nth-of-type(1) tdl-badge")
             if sim_badge:
                 sim_text = sim_badge.inner_text().strip()
                 if sim_text:
-                    log(f"Found Similarity badge text: {sim_text}")
+                    log(f"[{worker_name}] Found Similarity badge text: {sim_text}")
         except Exception:
             pass
         try:
@@ -451,7 +454,7 @@ def download_reports(page, chat_id, bot, original_filename=None):
             if ai_badge:
                 ai_text = ai_badge.inner_text().strip()
                 if ai_text:
-                    log(f"Found AI badge text: {ai_text}")
+                    log(f"[{worker_name}] Found AI badge text: {ai_text}")
         except Exception:
             pass
         
@@ -462,7 +465,7 @@ def download_reports(page, chat_id, bot, original_filename=None):
             pass
         
         # Download button found - reports available
-        log("Download button found - reports available")
+        log(f"[{worker_name}] Download button found - reports available")
         
         # Helper: open the download menu and wait for items to render
         def open_download_menu(p):
@@ -480,7 +483,7 @@ def download_reports(page, chat_id, bot, original_filename=None):
                         el = p.query_selector(opener)
                         if not el:
                             continue
-                        log(f"Opening download menu via selector: {opener}")
+                        log(f"[{worker_name}] Opening download menu via selector: {opener}")
                         el.click()
                         try:
                             p.wait_for_selector("ul.download-menu .download-menu-item button", timeout=5000)
@@ -495,7 +498,7 @@ def download_reports(page, chat_id, bot, original_filename=None):
         # Prefer menu-driven download as per provided markup
         def menu_click_download(p, button_selector, timeout_ms=90000, description=""):
             if not open_download_menu(p):
-                log("Download menu did not appear; cannot proceed with menu item clicks")
+                log(f"[{worker_name}] Download menu did not appear; cannot proceed with menu item clicks")
                 return None
             try:
                 btn = p.query_selector(button_selector)
@@ -510,14 +513,14 @@ def download_reports(page, chat_id, bot, original_filename=None):
                     if text:
                         btn = p.query_selector(f"ul.download-menu button:has-text('{text}')") or p.query_selector(f"button:has-text('{text}')")
                 if not btn:
-                    log(f"Menu item not found: {button_selector}")
+                    log(f"[{worker_name}] Menu item not found: {button_selector}")
                     return None
                 with p.expect_download(timeout=timeout_ms) as di:
-                    log(f"Clicking download menu item: {button_selector} ({description})")
+                    log(f"[{worker_name}] Clicking download menu item: {button_selector} ({description})")
                     btn.click()
                 return di.value
             except Exception as e:
-                log(f"Error clicking menu item {button_selector}: {e}")
+                log(f"[{worker_name}] Error clicking menu item {button_selector}: {e}")
                 return None
 
         # Try to use the explicit Similarity Report menu item first (li[1])
@@ -548,7 +551,7 @@ def download_reports(page, chat_id, bot, original_filename=None):
                         if not el:
                             continue
                         with p.expect_download(timeout=timeout_ms) as di:
-                            log(f"Trying direct download via selector: {sel}")
+                            log(f"[{worker_name}] Trying direct download via selector: {sel}")
                             el.click()
                         return di.value
                     except Exception:
@@ -563,10 +566,10 @@ def download_reports(page, chat_id, bot, original_filename=None):
         sim_filename = f"downloads/similarity_{chat_id}_{timestamp}.pdf"
         os.makedirs("downloads", exist_ok=True)
         download.save_as(sim_filename)
-        log(f"Saved Similarity Report as {sim_filename}")
+        log(f"[{worker_name}] Saved Similarity Report as {sim_filename}")
         
         # Downloading AI Writing Report...
-        log("Downloading AI Writing Report...")
+        log(f"[{worker_name}] Downloading AI Writing Report...")
 
         # Use explicit AI menu item (li[2]) per provided markup
         download2 = menu_click_download(
@@ -596,7 +599,7 @@ def download_reports(page, chat_id, bot, original_filename=None):
                 links = page.query_selector_all("a[href*='download'], a[title*='Download' i]")
                 if links and len(links) >= 2:
                     with page.expect_download(timeout=90000) as di2:
-                        log("Falling back to second download link on page for AI report")
+                        log(f"[{worker_name}] Falling back to second download link on page for AI report")
                         links[1].click()
                     download2 = di2.value
             except Exception:
@@ -607,16 +610,16 @@ def download_reports(page, chat_id, bot, original_filename=None):
         # Save AI report
         ai_filename = f"downloads/ai_{chat_id}_{timestamp}.pdf"
         download2.save_as(ai_filename)
-        log(f"Saved AI Writing Report as {ai_filename}")
+        log(f"[{worker_name}] Saved AI Writing Report as {ai_filename}")
         
         # Reports downloaded - Similarity: True, AI: True
-        log("Reports downloaded - Similarity: True, AI: True")
+        log(f"[{worker_name}] Reports downloaded - Similarity: True, AI: True")
         
         # Sending reports to user...
         bot.send_message(chat_id, "📤 Sending reports...")
         
     except Exception as e:
-        log(f"Error downloading reports: {e}")
+        log(f"[{worker_name}] Error downloading reports: {e}")
         bot.send_message(chat_id, f"⚠️ Error downloading reports: {e}")
     
     # Send reports directly to Telegram as files
@@ -624,16 +627,16 @@ def download_reports(page, chat_id, bot, original_filename=None):
         reports_sent = 0
         
         if sim_filename and os.path.exists(sim_filename):
-            log(f"Sending Similarity Report to Telegram: {sim_filename}")
+            log(f"[{worker_name}] Sending Similarity Report to Telegram: {sim_filename}")
             if send_document_with_retry(bot, chat_id, sim_filename, "📊 <b>Similarity Report</b>"):
                 reports_sent += 1
-                log("Similarity Report sent successfully to Telegram")
+                log(f"[{worker_name}] Similarity Report sent successfully to Telegram")
         
         if ai_filename and os.path.exists(ai_filename):
-            log(f"Sending AI Writing Report to Telegram: {ai_filename}")
+            log(f"[{worker_name}] Sending AI Writing Report to Telegram: {ai_filename}")
             if send_document_with_retry(bot, chat_id, ai_filename, "🤖 <b>AI Writing Report</b>"):
                 reports_sent += 1
-                log("AI Writing Report sent successfully to Telegram")
+                log(f"[{worker_name}] AI Writing Report sent successfully to Telegram")
         
         # Send summary message
         if reports_sent > 0:
@@ -649,7 +652,7 @@ def download_reports(page, chat_id, bot, original_filename=None):
             
             bot.send_message(chat_id, summary_message)
     except Exception as e:
-        log(f"Error in report delivery: {e}")
+        log(f"[{worker_name}] Error in report delivery: {e}")
         bot.send_message(chat_id, f"⚠️ Error delivering reports: {e}")
 
     # Return submission info
@@ -680,20 +683,23 @@ def send_reports_to_user(chat_id, bot, sim_filename, ai_filename, original_filen
     Returns:
         Number of reports successfully sent
     """
+    import threading
+    worker_name = threading.current_thread().name
+    
     try:
         reports_sent = 0
         
         if sim_filename and os.path.exists(sim_filename):
-            log(f"Sending Similarity Report to Telegram: {sim_filename}")
+            log(f"[{worker_name}] Sending Similarity Report to Telegram: {sim_filename}")
             if send_document_with_retry(bot, chat_id, sim_filename, "📊 <b>Similarity Report</b>"):
                 reports_sent += 1
-                log("Similarity Report sent successfully to Telegram")
+                log(f"[{worker_name}] Similarity Report sent successfully to Telegram")
         
         if ai_filename and os.path.exists(ai_filename):
-            log(f"Sending AI Writing Report to Telegram: {ai_filename}")
+            log(f"[{worker_name}] Sending AI Writing Report to Telegram: {ai_filename}")
             if send_document_with_retry(bot, chat_id, ai_filename, "🤖 <b>AI Writing Report</b>"):
                 reports_sent += 1
-                log("AI Writing Report sent successfully to Telegram")
+                log(f"[{worker_name}] AI Writing Report sent successfully to Telegram")
         
         # Send summary message
         if reports_sent > 0:
@@ -711,7 +717,7 @@ def send_reports_to_user(chat_id, bot, sim_filename, ai_filename, original_filen
             
         return reports_sent
     except Exception as e:
-        log(f"Error in report delivery: {e}")
+        log(f"[{worker_name}] Error in report delivery: {e}")
         bot.send_message(chat_id, f"⚠️ Error delivering reports: {e}")
         return 0
 
@@ -733,7 +739,7 @@ def send_document_with_retry(bot, chat_id, file_path, caption, parse_mode='HTML'
                 )
             return True
         except Exception as e:
-            log(f"send_document_with_retry attempt {attempt} failed: {e}")
+            log(f"[{worker_name}] send_document_with_retry attempt {attempt} failed: {e}")
             if attempt < attempts:
                 # exponential backoff with small jitter
                 delay = base_delay * (2 ** (attempt - 1))
@@ -746,7 +752,7 @@ def send_document_with_retry(bot, chat_id, file_path, caption, parse_mode='HTML'
                 try:
                     bot.send_message(chat_id, f"❗ Unable to send file after {attempts} attempts: {os.path.basename(file_path)}")
                 except Exception as e2:
-                    log(f"Failed to send failure notification: {e2}")
+                    log(f"[{worker_name}] Failed to send failure notification: {e2}")
                 return False
 
 
@@ -762,12 +768,12 @@ def download_reports_with_retry(page, chat_id, bot, original_filename=None, retr
             return download_reports(page, chat_id, bot, original_filename=original_filename)
         except Exception as e:
             last_exc = e
-            log(f"download_reports_with_retry: attempt {attempt} failed: {e}")
+            log(f"[{worker_name}] download_reports_with_retry: attempt {attempt} failed: {e}")
             if attempt < retries:
                 time.sleep(retry_delay)
 
     # If we get here, all retries failed — raise the last exception to make failures visible
-    log(f"download_reports_with_retry: all {retries} attempts failed: {last_exc}")
+    log(f"[{worker_name}] download_reports_with_retry: all {retries} attempts failed: {last_exc}")
     raise last_exc
 
 
@@ -776,14 +782,14 @@ def cleanup_files(sim_filename, ai_filename, file_path):
     try:
         if sim_filename and os.path.exists(sim_filename):
             os.remove(sim_filename)
-            log(f"Deleted {sim_filename}")
+            log(f"[{worker_name}] Deleted {sim_filename}")
         
         if ai_filename and os.path.exists(ai_filename):
             os.remove(ai_filename)
-            log(f"Deleted {ai_filename}")
+            log(f"[{worker_name}] Deleted {ai_filename}")
         
         if file_path and os.path.exists(file_path):
             os.remove(file_path)
-            log(f"Deleted {file_path}")
+            log(f"[{worker_name}] Deleted {file_path}")
     except Exception as e:
-        log(f"Cleanup error: {e}")
+        log(f"[{worker_name}] Cleanup error: {e}")
