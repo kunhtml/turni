@@ -350,8 +350,8 @@ def download_reports(page, chat_id, bot, original_filename=None):
         log("Downloading reports...")
         
         try:
-            # Wait for download button
-            page.wait_for_selector("a[title*='Download']", timeout=10000)
+            # Wait for a download affordance to appear in the viewer toolbar
+            page.wait_for_selector("a[title*='Download' i], button[aria-label*='Download' i], .tii-sws-download-btn-mfe", timeout=20000)
         except:
             log("Download button not found, waiting...")
             time.sleep(5)
@@ -389,51 +389,134 @@ def download_reports(page, chat_id, bot, original_filename=None):
         
         # Downloading Similarity Report...
         log("Downloading Similarity Report...")
-        
-        # Set up listener for download
-        with page.expect_download() as download_info:
-            download_button = page.query_selector("a[title*='download']") or page.query_selector("button:has-text('Download')")
-            if download_button:
-                download_button.click()
-        
-        download = download_info.value
+
+        def attempt_direct_download(p, timeout_ms=60000):
+            selectors = [
+                "a[download]",
+                "a[title*='Download' i]",
+                "button[aria-label*='Download' i]",
+                "button:has-text('Download')",
+            ]
+            for sel in selectors:
+                try:
+                    el = p.query_selector(sel)
+                    if not el:
+                        continue
+                    with p.expect_download(timeout=timeout_ms) as di:
+                        log(f"Trying direct download via selector: {sel}")
+                        el.click()
+                    return di.value
+                except Exception:
+                    continue
+            return None
+
+        def attempt_menu_download(p, timeout_ms=60000):
+            # Open the download menu if available, then click a menu item that triggers PDF download
+            openers = [
+                ".tii-sws-download-btn-mfe",
+                "button[aria-label*='Download' i]",
+                "div[role='button']:has-text('Download')",
+            ]
+            for opener in openers:
+                try:
+                    el = p.query_selector(opener)
+                    if not el:
+                        continue
+                    log(f"Opening download menu via selector: {opener}")
+                    el.click()
+                    time.sleep(0.5)
+                    # Now try likely menu items
+                    items = [
+                        "a[role='menuitem']:has-text('PDF')",
+                        "button[role='menuitem']:has-text('PDF')",
+                        "a:has-text('Download PDF')",
+                        "a:has-text('Similarity')",
+                        "a:has-text('Current View')",
+                        "a[title*='Download' i]",
+                    ]
+                    for item in items:
+                        try:
+                            mi = p.query_selector(item)
+                            if not mi:
+                                continue
+                            with p.expect_download(timeout=timeout_ms) as di:
+                                log(f"Clicking download menu item: {item}")
+                                mi.click()
+                            return di.value
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
+            return None
+
+        download = attempt_direct_download(page, timeout_ms=90000)
+        if not download:
+            download = attempt_menu_download(page, timeout_ms=90000)
+        if not download:
+            raise TimeoutError("Could not trigger Similarity report download via known selectors")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         # Save similarity report
         sim_filename = f"downloads/similarity_{chat_id}_{timestamp}.pdf"
         os.makedirs("downloads", exist_ok=True)
-        download.save_as(sim_filename)
-        log(f"Saved Similarity Report as downloads/{os.path.basename(sim_filename)}_2025 1023_012316_similarity.pdf")
+    download.save_as(sim_filename)
+    log(f"Saved Similarity Report as {sim_filename}")
         
         # Downloading AI Writing Report...
         log("Downloading AI Writing Report...")
         
-        # Download menu appeared
-        download_menu = page.query_selector(".tii-sws-download-btn-mfe")
-        if download_menu:
-            download_menu.click()
-        
-        # Download button clicked with selector: til-sws-download-btn-mfe
-        log("Download menu appeared")
-        
-        # Set up listener for second download
-        with page.expect_download() as download_info2:
-            ai_download = page.query_selector("a[title*='Download'][title*='Writing']") or page.query_selector("button:has-text('AI')")
-            if ai_download:
-                ai_download.click()
-            else:
-                # Try alternate selector
-                time.sleep(1)
-                downloads = page.query_selector_all("a[href*='download']")
-                if len(downloads) > 1:
-                    downloads[1].click()
-        
-        download2 = download_info2.value
+        # Downloading AI Writing Report...
+        log("Downloading AI Writing Report...")
+
+        # Try AI-specific entries first via menu; if not present, fall back to the second available download link
+        download2 = None
+        # Open menu
+        try:
+            opener = page.query_selector(".tii-sws-download-btn-mfe") or page.query_selector("button[aria-label*='Download' i]")
+            if opener:
+                opener.click()
+                time.sleep(0.5)
+        except Exception:
+            pass
+
+        # Likely AI menu items
+        ai_items = [
+            "a:has-text('AI')",
+            "a:has-text('Writing')",
+            "a[title*='AI' i]",
+            "button:has-text('AI')",
+        ]
+        for item in ai_items:
+            try:
+                el = page.query_selector(item)
+                if not el:
+                    continue
+                with page.expect_download(timeout=90000) as di2:
+                    log(f"Clicking AI download item: {item}")
+                    el.click()
+                download2 = di2.value
+                break
+            except Exception:
+                continue
+
+        # Fallback: pick a different download link on the page (e.g., second link)
+        if not download2:
+            try:
+                links = page.query_selector_all("a[href*='download'], a[title*='Download' i]")
+                if links and len(links) >= 2:
+                    with page.expect_download(timeout=90000) as di2:
+                        log("Falling back to second download link on page for AI report")
+                        links[1].click()
+                    download2 = di2.value
+            except Exception:
+                pass
+        if not download2:
+            raise TimeoutError("Could not trigger AI Writing report download via known selectors")
         
         # Save AI report
         ai_filename = f"downloads/ai_{chat_id}_{timestamp}.pdf"
-        download2.save_as(ai_filename)
-        log(f"Saved AI Writing Report as downloads/{os.path.basename(ai_filename)}_2025 1023_012316_ai.pdf")
+    download2.save_as(ai_filename)
+    log(f"Saved AI Writing Report as {ai_filename}")
         
         # Reports downloaded - Similarity: True, AI: True
         log("Reports downloaded - Similarity: True, AI: True")
