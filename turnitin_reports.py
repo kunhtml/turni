@@ -578,37 +578,49 @@ def download_reports(page, chat_id, bot, original_filename=None):
             if ai_tab:
                 log(f"[{worker_name}] Clicking AI Writing tab...")
                 ai_tab.click()
-                page.wait_for_timeout(2000)  # Wait for content to load
+                page.wait_for_timeout(3000)  # Wait for content to load
                 
-                # Check for unavailability message
-                unavailable_section = page.query_selector("section.header-section.header-section-v2 h2.empty-heading")
-                if unavailable_section:
-                    heading_text = unavailable_section.inner_text().strip()
-                    if "unavailable" in heading_text.lower():
-                        log(f"[{worker_name}] AI Writing Report is unavailable for this submission")
+                # Check if "Submission Breakdown" appears (indicates AI is available)
+                submission_breakdown = page.query_selector("h3.subheading:has-text('Submission Breakdown')")
+                if submission_breakdown:
+                    log(f"[{worker_name}] Found 'Submission Breakdown' - AI Writing Report is available")
+                    ai_available = True
+                else:
+                    # Check for unavailability message as fallback
+                    unavailable_section = page.query_selector("section.header-section.header-section-v2 h2.empty-heading")
+                    if unavailable_section:
+                        heading_text = unavailable_section.inner_text().strip()
+                        if "unavailable" in heading_text.lower():
+                            log(f"[{worker_name}] AI Writing Report is unavailable for this submission")
+                            ai_available = False
+                            
+                            # Send detailed bilingual message to user about AI report unavailability
+                            unavailability_message = (
+                                "⚠️ <b>AI Writing Report Unavailable / Báo cáo AI không có sẵn</b>\n\n"
+                                "📋 <b>Turnitin cannot generate AI report for this file.</b>\n"
+                                "📋 <b>Turnitin không thể tạo báo cáo AI cho file này.</b>\n\n"
+                                "❓ <b>Possible Reasons / Các lý do có thể:</b>\n\n"
+                                "• 📄 <b>Unsupported file type</b> / Loại file không được hỗ trợ\n"
+                                "   (Only supports: .doc, .docx, .pdf, .txt, .rtf, .odt, .html)\n"
+                                "   (Chỉ hỗ trợ: .doc, .docx, .pdf, .txt, .rtf, .odt, .html)\n\n"
+                                "• 🌍 <b>Unsupported language</b> / Ngôn ngữ không được hỗ trợ\n"
+                                "   (Currently English only / Hiện tại chỉ hỗ trợ tiếng Anh)\n\n"
+                                "• 📏 <b>Text too short</b> / Văn bản quá ngắn\n"
+                                "   (Less than 300 words / Dưới 300 từ)\n\n"
+                                "• 📚 <b>Text too long</b> / Văn bản quá dài\n"
+                                "   (More than 30,000 words / Trên 30,000 từ)\n\n"
+                                "• 🚫 <b>Content not eligible for AI analysis</b>\n"
+                                "   Nội dung không đủ điều kiện để phân tích AI\n\n"
+                                "✅ <b>You will still receive the Similarity Report</b>\n"
+                                "✅ <b>Bạn vẫn sẽ nhận được Báo cáo Tương đồng (Similarity Report)</b>"
+                            )
+                            bot.send_message(chat_id, unavailability_message, parse_mode='HTML')
+                        else:
+                            log(f"[{worker_name}] Unexpected heading text: {heading_text}, assuming unavailable")
+                            ai_available = False
+                    else:
+                        log(f"[{worker_name}] No 'Submission Breakdown' or unavailability message found, assuming unavailable")
                         ai_available = False
-                        
-                        # Send detailed bilingual message to user about AI report unavailability
-                        unavailability_message = (
-                            "⚠️ <b>AI Writing Report Unavailable / Báo cáo AI không có sẵn</b>\n\n"
-                            "📋 <b>Turnitin cannot generate AI report for this file.</b>\n"
-                            "📋 <b>Turnitin không thể tạo báo cáo AI cho file này.</b>\n\n"
-                            "❓ <b>Possible Reasons / Các lý do có thể:</b>\n\n"
-                            "• 📄 <b>Unsupported file type</b> / Loại file không được hỗ trợ\n"
-                            "   (Only supports: .doc, .docx, .pdf, .txt, .rtf, .odt, .html)\n"
-                            "   (Chỉ hỗ trợ: .doc, .docx, .pdf, .txt, .rtf, .odt, .html)\n\n"
-                            "• 🌍 <b>Unsupported language</b> / Ngôn ngữ không được hỗ trợ\n"
-                            "   (Currently English only / Hiện tại chỉ hỗ trợ tiếng Anh)\n\n"
-                            "• 📏 <b>Text too short</b> / Văn bản quá ngắn\n"
-                            "   (Less than 300 words / Dưới 300 từ)\n\n"
-                            "• 📚 <b>Text too long</b> / Văn bản quá dài\n"
-                            "   (More than 30,000 words / Trên 30,000 từ)\n\n"
-                            "• 🚫 <b>Content not eligible for AI analysis</b>\n"
-                            "   Nội dung không đủ điều kiện để phân tích AI\n\n"
-                            "✅ <b>You will still receive the Similarity Report</b>\n"
-                            "✅ <b>Bạn vẫn sẽ nhận được Báo cáo Tương đồng (Similarity Report)</b>"
-                        )
-                        bot.send_message(chat_id, unavailability_message, parse_mode='HTML')
             else:
                 log(f"[{worker_name}] AI Writing tab not found, assuming unavailable")
                 ai_available = False
