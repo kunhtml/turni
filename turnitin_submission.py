@@ -386,7 +386,7 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
     
     # Check for "Congratulations - your submission is complete!" message
     confirmation_found = False
-    max_check_attempts = 120  # Up to 2 minutes of checking
+    max_check_attempts = 30  # Up to 30 seconds of checking
     check_interval = 1  # Check every 1 second
     
     for attempt in range(max_check_attempts):
