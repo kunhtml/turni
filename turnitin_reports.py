@@ -58,45 +58,80 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
         # Look for submission link with exact title match (not prefix)
         log(f"[{worker_name}] Searching for submission: '{submission_title}'")
         
-        # Get all rows in the submission table
-        try:
-            rows = page.query_selector_all("tr")
-            log(f"Found {len(rows)} rows in submission table")
-            
-            for row_idx, row in enumerate(rows):
-                try:
-                    # Get all cells in this row
-                    cells = row.query_selector_all("td")
-                    if len(cells) > 0:
-                        # Get the submission title from first cell
-                        title_text = cells[0].inner_text().strip()
-                        
-                        # Exact match instead of prefix match
-                        if title_text == submission_title:
-                            log(f"[{worker_name}] Found exact match: {title_text}")
-                            
-                            # Click on this submission
-                            try:
-                                link = row.query_selector("a")
-                                if link:
-                                    link.click()
-                                    log(f"[{worker_name}] Clicked submission link")
-                                    time.sleep(3)
-                                    
-                                    # Wait for reports page to load
-                                    page.wait_for_load_state("networkidle", timeout=30000)
-                                    log(f"[{worker_name}] Submission page loaded, returning page object")
-                                    
-                                    # Return the page object so caller can use it
-                                    return page
-                            except Exception as click_error:
-                                log(f"[{worker_name}] Error clicking submission: {click_error}")
-                except Exception as cell_error:
-                    pass
-        except Exception as rows_error:
-            log(f"[{worker_name}] Error processing rows: {rows_error}")
+        # Get all rows in the submission table, with retries for newly submitted documents
+        max_retries = 5
+        retry_delay = 3  # seconds between retries
         
-        log(f"[{worker_name}] Submission not found in inbox")
+        for retry_attempt in range(max_retries):
+            if retry_attempt > 0:
+                log(f"[{worker_name}] Submission not found yet (attempt {retry_attempt}/{max_retries}), retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+                # Refresh page to get latest submissions
+                page.reload(wait_until='networkidle')
+                time.sleep(2)
+            
+            try:
+                # First, try to find the main submission table
+                table = page.query_selector("table[class*='inbox'], table[id*='inbox'], table[class*='submission']")
+                
+                if table:
+                    rows = table.query_selector_all("tbody tr")
+                else:
+                    # Fallback: get all table rows but skip header rows
+                    rows = page.query_selector_all("tr")
+                    # Filter out header rows (rows with th elements)
+                    rows = [r for r in rows if len(r.query_selector_all("th")) == 0]
+                
+                log(f"[{worker_name}] Found {len(rows)} data rows in submission table (attempt {retry_attempt + 1})")
+                
+                # Debug: show table structure if first attempt
+                if retry_attempt == 0 and len(rows) > 0:
+                    try:
+                        first_cells = rows[0].query_selector_all("td")
+                        if len(first_cells) > 0:
+                            log(f"[{worker_name}] Table structure: {len(first_cells)} columns in first row")
+                    except:
+                        pass
+                
+                for row_idx, row in enumerate(rows):
+                    try:
+                        # Get all cells in this row
+                        cells = row.query_selector_all("td")
+                        if len(cells) > 0:
+                            # Get the submission title from first cell
+                            title_text = cells[0].inner_text().strip()
+                            
+                            # Debug: Log first few titles to understand table structure
+                            if row_idx < 3:
+                                log(f"[{worker_name}] Row {row_idx}: '{title_text}'")
+                            
+                            # Exact match instead of prefix match
+                            if title_text == submission_title:
+                                log(f"[{worker_name}] Found exact match: {title_text}")
+                                
+                                # Click on this submission
+                                try:
+                                    link = row.query_selector("a")
+                                    if link:
+                                        link.click()
+                                        log(f"[{worker_name}] Clicked submission link")
+                                        time.sleep(3)
+                                        
+                                        # Wait for reports page to load
+                                        page.wait_for_load_state("networkidle", timeout=30000)
+                                        log(f"[{worker_name}] Submission page loaded, returning page object")
+                                        
+                                        # Return the page object so caller can use it
+                                        return page
+                                except Exception as click_error:
+                                    log(f"[{worker_name}] Error clicking submission: {click_error}")
+                    except Exception as cell_error:
+                        pass
+                        
+            except Exception as rows_error:
+                log(f"[{worker_name}] Error processing rows (attempt {retry_attempt + 1}): {rows_error}")
+        
+        log(f"[{worker_name}] Submission not found in inbox after {max_retries} attempts")
         return None
 
     except Exception as e:

@@ -411,8 +411,20 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
     if not close_clicked:
         raise Exception("Could not find Close button with any selector")
     
-    # Wait before searching for submission
-    log("Waiting before searching for submission...")
-    page.wait_for_timeout(30000)  # 30 seconds
+    # Wait for inbox page to load after clicking "Go to assignment inbox"
+    log("Waiting for inbox page to load...")
+    page.wait_for_timeout(3000)  # Give page time to navigate
+    
+    # Ensure inbox page has fully loaded
+    try:
+        page.wait_for_load_state('domcontentloaded', timeout=30000)
+        page.wait_for_load_state('networkidle', timeout=30000)
+        log("Inbox page fully loaded")
+    except Exception as load_err:
+        log(f"Inbox load warning: {load_err}")
+    
+    # Final wait before searching for submission
+    log("Final wait before searching for submission...")
+    page.wait_for_timeout(5000)  # 5 seconds additional buffer
 
     return actual_submission_title

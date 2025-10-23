@@ -68,6 +68,7 @@ def process_turnitin(file_path: str, chat_id: int, bot):
 
         # Find the submitted document
         log("Finding submitted document...")
+        log(f"Submission title to search for: '{actual_submission_title}'")
         page1 = find_submission_with_retry(session_page, actual_submission_title, chat_id, bot, processing_messages)
         
         if page1 is None:
