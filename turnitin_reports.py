@@ -687,38 +687,38 @@ def send_reports_to_user(chat_id, bot, sim_filename, ai_filename, original_filen
         return 0
 
 
-    def send_document_with_retry(bot, chat_id, file_path, caption, parse_mode='HTML', attempts=3, base_delay=2):
-        """Send a document to Telegram with retries.
-        Returns True if sent successfully, False otherwise.
-        Direct Telegram upload only; no fallback to external hosting.
-        """
-        for attempt in range(1, attempts + 1):
-            try:
-                with open(file_path, 'rb') as f:
-                    bot.send_document(
-                        chat_id,
-                        f,
-                        caption=caption,
-                        parse_mode=parse_mode,
-                        timeout=120
-                    )
-                return True
-            except Exception as e:
-                log(f"send_document_with_retry attempt {attempt} failed: {e}")
-                if attempt < attempts:
-                    # exponential backoff with small jitter
-                    delay = base_delay * (2 ** (attempt - 1))
-                    try:
-                        time.sleep(delay)
-                    except Exception:
-                        pass
-                else:
-                    # Final failure: log and return False
-                    try:
-                        bot.send_message(chat_id, f"❗ Unable to send file after {attempts} attempts: {os.path.basename(file_path)}")
-                    except Exception as e2:
-                        log(f"Failed to send failure notification: {e2}")
-                    return False
+def send_document_with_retry(bot, chat_id, file_path, caption, parse_mode='HTML', attempts=3, base_delay=2):
+    """Send a document to Telegram with retries.
+    Returns True if sent successfully, False otherwise.
+    Direct Telegram upload only; no fallback to external hosting.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            with open(file_path, 'rb') as f:
+                bot.send_document(
+                    chat_id,
+                    f,
+                    caption=caption,
+                    parse_mode=parse_mode,
+                    timeout=120
+                )
+            return True
+        except Exception as e:
+            log(f"send_document_with_retry attempt {attempt} failed: {e}")
+            if attempt < attempts:
+                # exponential backoff with small jitter
+                delay = base_delay * (2 ** (attempt - 1))
+                try:
+                    time.sleep(delay)
+                except Exception:
+                    pass
+            else:
+                # Final failure: log and return False
+                try:
+                    bot.send_message(chat_id, f"❗ Unable to send file after {attempts} attempts: {os.path.basename(file_path)}")
+                except Exception as e2:
+                    log(f"Failed to send failure notification: {e2}")
+                return False
 
 
 def download_reports_with_retry(page, chat_id, bot, original_filename=None, retries=3, retry_delay=5):
