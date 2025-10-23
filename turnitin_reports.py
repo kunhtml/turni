@@ -387,34 +387,11 @@ def download_reports(page, chat_id, bot, original_filename=None):
         # Download button found - reports available
         log("Download button found - reports available")
         
-        # Downloading Similarity Report...
-        log("Downloading Similarity Report...")
-
-        def attempt_direct_download(p, timeout_ms=60000):
-            selectors = [
-                "a[download]",
-                "a[title*='Download' i]",
-                "button[aria-label*='Download' i]",
-                "button:has-text('Download')",
-            ]
-            for sel in selectors:
-                try:
-                    el = p.query_selector(sel)
-                    if not el:
-                        continue
-                    with p.expect_download(timeout=timeout_ms) as di:
-                        log(f"Trying direct download via selector: {sel}")
-                        el.click()
-                    return di.value
-                except Exception:
-                    continue
-            return None
-
-        def attempt_menu_download(p, timeout_ms=60000):
-            # Open the download menu if available, then click a menu item that triggers PDF download
+        # Helper: open the download menu and wait for items to render
+        def open_download_menu(p):
             openers = [
-                ".tii-sws-download-btn-mfe",
                 "button[aria-label*='Download' i]",
+                ".tii-sws-download-btn-mfe",
                 "div[role='button']:has-text('Download')",
             ]
             for opener in openers:
@@ -424,34 +401,71 @@ def download_reports(page, chat_id, bot, original_filename=None):
                         continue
                     log(f"Opening download menu via selector: {opener}")
                     el.click()
-                    time.sleep(0.5)
-                    # Now try likely menu items
-                    items = [
-                        "a[role='menuitem']:has-text('PDF')",
-                        "button[role='menuitem']:has-text('PDF')",
-                        "a:has-text('Download PDF')",
-                        "a:has-text('Similarity')",
-                        "a:has-text('Current View')",
-                        "a[title*='Download' i]",
-                    ]
-                    for item in items:
-                        try:
-                            mi = p.query_selector(item)
-                            if not mi:
-                                continue
-                            with p.expect_download(timeout=timeout_ms) as di:
-                                log(f"Clicking download menu item: {item}")
-                                mi.click()
-                            return di.value
-                        except Exception:
-                            continue
+                    try:
+                        p.wait_for_selector("ul.download-menu .download-menu-item button", timeout=5000)
+                        return True
+                    except Exception:
+                        time.sleep(0.2)
+                        # Try next opener if menu not visible
                 except Exception:
                     continue
-            return None
+            return False
 
-        download = attempt_direct_download(page, timeout_ms=90000)
+        # Prefer menu-driven download as per provided markup
+        def menu_click_download(p, button_selector, timeout_ms=90000, description=""):
+            if not open_download_menu(p):
+                log("Download menu did not appear; cannot proceed with menu item clicks")
+                return None
+            try:
+                btn = p.query_selector(button_selector)
+                if not btn:
+                    # Fallback by visible text inside menu
+                    # e.g., button:has-text('Similarity Report')
+                    text_map = {
+                        "sim": "Similarity Report",
+                        "ai": "AI Writing Report",
+                    }
+                    text = text_map.get(description, None)
+                    if text:
+                        btn = p.query_selector(f"ul.download-menu button:has-text('{text}')") or p.query_selector(f"button:has-text('{text}')")
+                if not btn:
+                    log(f"Menu item not found: {button_selector}")
+                    return None
+                with p.expect_download(timeout=timeout_ms) as di:
+                    log(f"Clicking download menu item: {button_selector} ({description})")
+                    btn.click()
+                return di.value
+            except Exception as e:
+                log(f"Error clicking menu item {button_selector}: {e}")
+                return None
+
+        # Try to use the explicit Similarity Report menu item first
+        download = menu_click_download(
+            page,
+            "ul.download-menu button[data-px='SimReportDownloadClicked']",
+            timeout_ms=90000,
+            description="sim",
+        )
         if not download:
-            download = attempt_menu_download(page, timeout_ms=90000)
+            # As a fallback, attempt direct anchors if any exist
+            def attempt_direct_download(p, timeout_ms=60000):
+                selectors = [
+                    "a[download]",
+                    "a[title*='Download' i]",
+                ]
+                for sel in selectors:
+                    try:
+                        el = p.query_selector(sel)
+                        if not el:
+                            continue
+                        with p.expect_download(timeout=timeout_ms) as di:
+                            log(f"Trying direct download via selector: {sel}")
+                            el.click()
+                        return di.value
+                    except Exception:
+                        continue
+                return None
+            download = attempt_direct_download(page, timeout_ms=90000)
         if not download:
             raise TimeoutError("Could not trigger Similarity report download via known selectors")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -465,38 +479,21 @@ def download_reports(page, chat_id, bot, original_filename=None):
         # Downloading AI Writing Report...
         log("Downloading AI Writing Report...")
 
-        # Try AI-specific entries first via menu; if not present, fall back to the second available download link
-        download2 = None
-        # Open menu
-        try:
-            opener = page.query_selector(".tii-sws-download-btn-mfe") or page.query_selector("button[aria-label*='Download' i]")
-            if opener:
-                opener.click()
-                time.sleep(0.5)
-        except Exception:
-            pass
-
-        # Likely AI menu items
-        ai_items = [
-            "a:has-text('AI')",
-            "a:has-text('Writing')",
-            "a[title*='AI' i]",
-            "button:has-text('AI')",
-        ]
-        for item in ai_items:
-            try:
-                el = page.query_selector(item)
-                if not el:
-                    continue
-                with page.expect_download(timeout=90000) as di2:
-                    log(f"Clicking AI download item: {item}")
-                    el.click()
-                download2 = di2.value
-                break
-            except Exception:
-                continue
-
-        # Fallback: pick a different download link on the page (e.g., second link)
+        # Use explicit AI menu item per provided markup
+        download2 = menu_click_download(
+            page,
+            "ul.download-menu button[data-px='AIWritingReportDownload']",
+            timeout_ms=90000,
+            description="ai",
+        )
+        if not download2:
+            # Fallbacks by visible text or generic anchors
+            download2 = menu_click_download(
+                page,
+                "ul.download-menu button:has-text('AI Writing Report')",
+                timeout_ms=90000,
+                description="ai",
+            )
         if not download2:
             try:
                 links = page.query_selector_all("a[href*='download'], a[title*='Download' i]")
