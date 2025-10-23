@@ -393,20 +393,26 @@ def download_reports(page, chat_id, bot, original_filename=None):
         bot.send_message(chat_id, "⏳ Waiting 60 seconds for reports...")
         time.sleep(60)
         
-        # Checking AI Writing score for document validation...
-        log("Checking AI Writing score for document validation...")
-        
-        # Found AI score
+        # Checking Similarity and AI badges in viewer (web components)
+        log("Checking AI/Similarity badges for document validation...")
         try:
-            ai_badge = page.query_selector(".ai-writing-badge .label")
+            # Similarity badge (Tab 1)
+            sim_badge = page.query_selector("tii-sws-submission-workspace tii-sws-tab-navigator tii-sws-tab-button:nth-of-type(1) tdl-badge, tii-sws-tab-navigator tii-sws-tab-button:nth-of-type(1) tdl-badge")
+            if sim_badge:
+                sim_text = sim_badge.inner_text().strip()
+                if sim_text:
+                    log(f"Found Similarity badge text: {sim_text}")
+        except Exception:
+            pass
+        try:
+            # AI badge (Tab 3)
+            ai_badge = page.query_selector("tii-sws-submission-workspace tii-sws-tab-navigator tii-sws-tab-button:nth-of-type(3) tdl-badge, tii-sws-tab-navigator tii-sws-tab-button:nth-of-type(3) tdl-badge")
             if ai_badge:
-                ai_score_text = ai_badge.inner_text()
-                log(f"Found AI score with selector '.ai-writing-badge .label': {ai_score_text}")
-        except:
-            log("Could not find AI score")
-        
-        # Valid AI Writing score found: 0%
-        log("Valid AI Writing score found: 0%")
+                ai_text = ai_badge.inner_text().strip()
+                if ai_text:
+                    log(f"Found AI badge text: {ai_text}")
+        except Exception:
+            pass
         
         # Checking reports on: https://ev.turnitin.com/app/carta/en_us/?lang=en_us&s=1&o=111&u=...
         try:
@@ -422,6 +428,8 @@ def download_reports(page, chat_id, bot, original_filename=None):
             openers = [
                 "button[aria-label*='Download' i]",
                 ".tii-sws-download-btn-mfe",
+                "tii-sws-download-btn-mfe",
+                "tii-sws-header tii-sws-download-btn-mfe",
                 "div[role='button']:has-text('Download')",
             ]
             # Try up to 3 rounds with small delays
@@ -471,13 +479,21 @@ def download_reports(page, chat_id, bot, original_filename=None):
                 log(f"Error clicking menu item {button_selector}: {e}")
                 return None
 
-        # Try to use the explicit Similarity Report menu item first
+        # Try to use the explicit Similarity Report menu item first (li[1])
         download = menu_click_download(
             page,
-            "ul.download-menu button[data-px='SimReportDownloadClicked']",
+            "ul.download-menu li:nth-child(1) button",
             timeout_ms=90000,
             description="sim",
         )
+        if not download:
+            # Fallback to data-px attribute if order changes
+            download = menu_click_download(
+                page,
+                "ul.download-menu button[data-px='SimReportDownloadClicked']",
+                timeout_ms=90000,
+                description="sim",
+            )
         if not download:
             # As a fallback, attempt direct anchors if any exist
             def attempt_direct_download(p, timeout_ms=60000):
@@ -511,13 +527,21 @@ def download_reports(page, chat_id, bot, original_filename=None):
         # Downloading AI Writing Report...
         log("Downloading AI Writing Report...")
 
-        # Use explicit AI menu item per provided markup
+        # Use explicit AI menu item (li[2]) per provided markup
         download2 = menu_click_download(
             page,
-            "ul.download-menu button[data-px='AIWritingReportDownload']",
+            "ul.download-menu li:nth-child(2) button",
             timeout_ms=90000,
             description="ai",
         )
+        if not download2:
+            # Fallback by data-px attribute
+            download2 = menu_click_download(
+                page,
+                "ul.download-menu button[data-px='AIWritingReportDownload']",
+                timeout_ms=90000,
+                description="ai",
+            )
         if not download2:
             # Fallbacks by visible text or generic anchors
             download2 = menu_click_download(
