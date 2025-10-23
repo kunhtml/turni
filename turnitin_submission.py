@@ -379,52 +379,55 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
     if not confirm_clicked:
         raise Exception("Could not find Confirm button with any selector")
 
-    # Wait for processing
-    log("Waiting for processing...")
-    msg = bot.send_message(chat_id, "⏳ Document submitted, processing...")
+    # Wait for digital receipt confirmation message
+    log("Waiting for submission confirmation message...")
+    msg = bot.send_message(chat_id, "⏳ Document submitted, waiting for confirmation...")
     processing_messages.append(msg.message_id)
-    page.wait_for_timeout(60000)  # 60 seconds
-
-    # Click close/inbox button with multiple selectors
-    log("Going to assignment inbox...")
-
-    close_selectors = [
-        '#close-btn',                               # ID selector from HTML
-        'button:has-text("Go to assignment inbox")', # Text-based selector
-        '.btn-primary.state-digital-receipt',       # Class-based selector
-        'button[class*="state-digital-receipt"]'    # Partial class match
-    ]
-
-    close_clicked = False
-    for selector in close_selectors:
+    
+    # Check for "Congratulations - your submission is complete!" message
+    confirmation_found = False
+    max_check_attempts = 120  # Up to 2 minutes of checking
+    check_interval = 1  # Check every 1 second
+    
+    for attempt in range(max_check_attempts):
         try:
-            log(f"Trying Close button selector: {selector}")
-            page.wait_for_selector(selector, timeout=15000)
-            page.click(selector)
-            log(f"Close button clicked successfully with selector: {selector}")
-            close_clicked = True
-            break
-        except Exception as selector_error:
-            log(f"Close selector {selector} failed: {selector_error}")
-            continue
-
-    if not close_clicked:
-        raise Exception("Could not find Close button with any selector")
+            # Look for the congratulations message
+            confirmation_element = page.query_selector('span.text-default-color')
+            if confirmation_element:
+                confirmation_text = confirmation_element.inner_text().strip()
+                if "Congratulations" in confirmation_text and "submission is complete" in confirmation_text:
+                    log(f"✅ Found confirmation message: {confirmation_text}")
+                    confirmation_found = True
+                    break
+        except Exception as check_error:
+            pass
+        
+        if not confirmation_found:
+            time.sleep(check_interval)
+            if (attempt + 1) % 10 == 0:  # Log every 10 attempts
+                log(f"Still waiting for confirmation... (attempt {attempt + 1}/{max_check_attempts})")
     
-    # Wait for inbox page to load after clicking "Go to assignment inbox"
-    log("Waiting for inbox page to load...")
-    page.wait_for_timeout(3000)  # Give page time to navigate
+    if not confirmation_found:
+        log("⚠️ Warning: Could not find confirmation message, but continuing...")
     
-    # Ensure inbox page has fully loaded
+    # Navigate to Quick Submit page immediately after confirmation
+    log("Navigating to Quick Submit page...")
+    try:
+        navigate_to_quick_submit()
+        log("✅ Quick Submit page loaded successfully")
+    except Exception as quick_submit_err:
+        log(f"Error navigating to Quick Submit: {quick_submit_err}")
+        raise
+    
+    # Wait for Quick Submit page to fully load
     try:
         page.wait_for_load_state('domcontentloaded', timeout=30000)
         page.wait_for_load_state('networkidle', timeout=30000)
-        log("Inbox page fully loaded")
+        log("Quick Submit page fully loaded, ready to search for submission")
     except Exception as load_err:
-        log(f"Inbox load warning: {load_err}")
+        log(f"Quick Submit page load warning: {load_err}")
     
-    # Final wait before searching for submission
-    log("Final wait before searching for submission...")
-    page.wait_for_timeout(5000)  # 5 seconds additional buffer
+    # Small buffer before returning to allow page to stabilize
+    page.wait_for_timeout(2000)  # 2 seconds buffer
 
     return actual_submission_title
