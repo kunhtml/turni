@@ -590,23 +590,6 @@ def download_reports(page, chat_id, bot, original_filename=None):
         log(f"Error downloading reports: {e}")
         bot.send_message(chat_id, f"⚠️ Error downloading reports: {e}")
     
-    # Optionally upload to Filebin and send links
-    try:
-        links_msg_parts = []
-        if sim_filename and os.path.exists(sim_filename):
-            url = upload_file_to_filebin(sim_filename)
-            if url:
-                links_msg_parts.append(f"📄 Similarity: {url}")
-        if ai_filename and os.path.exists(ai_filename):
-            url = upload_file_to_filebin(ai_filename)
-            if url:
-                links_msg_parts.append(f"🤖 AI Writing: {url}")
-        if links_msg_parts:
-            bot.send_message(chat_id, "🔗 Filebin links:\n" + "\n".join(links_msg_parts))
-            log("Filebin links sent to user")
-    except Exception as link_err:
-        log(f"Filebin upload warning: {link_err}")
-
     # Send reports directly to Telegram as files
     try:
         reports_sent = 0
