@@ -604,9 +604,24 @@ def download_reports(page, chat_id, bot, original_filename=None):
             bot.send_message(chat_id, "📤 Sending reports...")
             send_document_with_retry(bot, chat_id, sim_filename, "📊 Similarity Report")
             
-            # Cleaning up downloaded files...
-            cleanup_files([sim_filename])
-            return
+            # Clean up similarity report after sending
+            try:
+                if os.path.exists(sim_filename):
+                    os.remove(sim_filename)
+                    log(f"[{worker_name}] Deleted {sim_filename}")
+            except Exception as e:
+                log(f"[{worker_name}] Cleanup error: {e}")
+            
+            # Return submission info for AI unavailable case
+            submission_info = {
+                'submission_title': None,
+                'similarity_score': None,
+                'ai_score': None,
+                'submission_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'reports_available': True,
+                'ai_available': False
+            }
+            return submission_info
         
         # Downloading AI Writing Report...
         log(f"[{worker_name}] Downloading AI Writing Report...")
