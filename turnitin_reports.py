@@ -568,6 +568,46 @@ def download_reports(page, chat_id, bot, original_filename=None):
         download.save_as(sim_filename)
         log(f"[{worker_name}] Saved Similarity Report as {sim_filename}")
         
+        # Check AI Writing availability by clicking tab 3 first
+        log(f"[{worker_name}] Checking AI Writing Report availability...")
+        ai_available = True
+        try:
+            # Click AI Writing tab (tab 3)
+            ai_tab_xpath = "//tii-sws-submission-workspace//div/tii-sws-tab-navigator//div/tii-sws-tab-button[3]"
+            ai_tab = page.query_selector(f"xpath={ai_tab_xpath}")
+            if ai_tab:
+                log(f"[{worker_name}] Clicking AI Writing tab...")
+                ai_tab.click()
+                page.wait_for_timeout(2000)  # Wait for content to load
+                
+                # Check for unavailability message
+                unavailable_section = page.query_selector("section.header-section.header-section-v2 h2.empty-heading")
+                if unavailable_section:
+                    heading_text = unavailable_section.inner_text().strip()
+                    if "unavailable" in heading_text.lower():
+                        log(f"[{worker_name}] AI Writing Report is unavailable for this submission")
+                        ai_available = False
+                        bot.send_message(chat_id, "⚠️ AI Writing Report is not available for this submission.\nPossible reasons:\n- Unsupported file type\n- Unsupported language\n- Text is fewer than 300 words or more than 30,000 words")
+            else:
+                log(f"[{worker_name}] AI Writing tab not found, assuming unavailable")
+                ai_available = False
+        except Exception as e:
+            log(f"[{worker_name}] Error checking AI availability: {e}")
+            ai_available = False
+        
+        if not ai_available:
+            log(f"[{worker_name}] Skipping AI Writing Report download")
+            # Reports downloaded - Similarity: True, AI: False
+            log(f"[{worker_name}] Reports downloaded - Similarity: True, AI: False")
+            
+            # Sending reports to user...
+            bot.send_message(chat_id, "📤 Sending reports...")
+            send_document_with_retry(bot, chat_id, sim_filename, "📊 Similarity Report")
+            
+            # Cleaning up downloaded files...
+            cleanup_files([sim_filename])
+            return
+        
         # Downloading AI Writing Report...
         log(f"[{worker_name}] Downloading AI Writing Report...")
 
@@ -727,6 +767,9 @@ def send_document_with_retry(bot, chat_id, file_path, caption, parse_mode='HTML'
     Returns True if sent successfully, False otherwise.
     Direct Telegram upload only; no fallback to external hosting.
     """
+    import threading
+    worker_name = threading.current_thread().name
+    
     for attempt in range(1, attempts + 1):
         try:
             with open(file_path, 'rb') as f:
@@ -762,6 +805,9 @@ def download_reports_with_retry(page, chat_id, bot, original_filename=None, retr
     Calls `download_reports` and will retry up to `retries` times if it raises an exception.
     Keeps the same return shape as `download_reports`.
     """
+    import threading
+    worker_name = threading.current_thread().name
+    
     last_exc = None
     for attempt in range(1, retries + 1):
         try:
@@ -779,6 +825,9 @@ def download_reports_with_retry(page, chat_id, bot, original_filename=None, retr
 
 def cleanup_files(sim_filename, ai_filename, file_path):
     """Clean up downloaded and uploaded files"""
+    import threading
+    worker_name = threading.current_thread().name
+    
     try:
         if sim_filename and os.path.exists(sim_filename):
             os.remove(sim_filename)
