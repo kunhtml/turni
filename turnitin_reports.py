@@ -587,7 +587,28 @@ def download_reports(page, chat_id, bot, original_filename=None):
                     if "unavailable" in heading_text.lower():
                         log(f"[{worker_name}] AI Writing Report is unavailable for this submission")
                         ai_available = False
-                        bot.send_message(chat_id, "⚠️ AI Writing Report is not available for this submission.\nPossible reasons:\n- Unsupported file type\n- Unsupported language\n- Text is fewer than 300 words or more than 30,000 words")
+                        
+                        # Send detailed bilingual message to user about AI report unavailability
+                        unavailability_message = (
+                            "⚠️ <b>AI Writing Report Unavailable / Báo cáo AI không có sẵn</b>\n\n"
+                            "📋 <b>Turnitin cannot generate AI report for this file.</b>\n"
+                            "📋 <b>Turnitin không thể tạo báo cáo AI cho file này.</b>\n\n"
+                            "❓ <b>Possible Reasons / Các lý do có thể:</b>\n\n"
+                            "• 📄 <b>Unsupported file type</b> / Loại file không được hỗ trợ\n"
+                            "   (Only supports: .doc, .docx, .pdf, .txt, .rtf, .odt, .html)\n"
+                            "   (Chỉ hỗ trợ: .doc, .docx, .pdf, .txt, .rtf, .odt, .html)\n\n"
+                            "• 🌍 <b>Unsupported language</b> / Ngôn ngữ không được hỗ trợ\n"
+                            "   (Currently English only / Hiện tại chỉ hỗ trợ tiếng Anh)\n\n"
+                            "• 📏 <b>Text too short</b> / Văn bản quá ngắn\n"
+                            "   (Less than 300 words / Dưới 300 từ)\n\n"
+                            "• 📚 <b>Text too long</b> / Văn bản quá dài\n"
+                            "   (More than 30,000 words / Trên 30,000 từ)\n\n"
+                            "• 🚫 <b>Content not eligible for AI analysis</b>\n"
+                            "   Nội dung không đủ điều kiện để phân tích AI\n\n"
+                            "✅ <b>You will still receive the Similarity Report</b>\n"
+                            "✅ <b>Bạn vẫn sẽ nhận được Báo cáo Tương đồng (Similarity Report)</b>"
+                        )
+                        bot.send_message(chat_id, unavailability_message, parse_mode='HTML')
             else:
                 log(f"[{worker_name}] AI Writing tab not found, assuming unavailable")
                 ai_available = False
