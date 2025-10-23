@@ -339,8 +339,24 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                                                             log(f"[{worker_name}] Could not find Similarity report link in row for fallback")
                                                     except Exception as link_err:
                                                         log(f"[{worker_name}] Error opening Similarity report link: {link_err}")
-                                                    # As a last resort, return the current page
-                                                    return page
+                                                    # Try same-tab navigation as a fallback (no popup)
+                                                    try:
+                                                        link.click()
+                                                        try:
+                                                            page.wait_for_url(lambda url: 'ev.turnitin.com/app/carta' in url, timeout=15000)
+                                                        except Exception:
+                                                            pass
+                                                        # Or detect viewer components loaded in same tab
+                                                        try:
+                                                            page.wait_for_selector('tii-sws-submission-workspace, tii-sws-header', timeout=15000)
+                                                            log(f"[{worker_name}] Viewer opened in same tab via Similarity link")
+                                                            return page
+                                                        except Exception:
+                                                            pass
+                                                    except Exception:
+                                                        pass
+                                                    # As a last resort, indicate failure so caller won't proceed on inbox page
+                                                    return None
                                             else:
                                                 log(f"[{worker_name}] Error: Title link not found for second click")
                                 except Exception as click_error:
@@ -372,9 +388,17 @@ def download_reports(page, chat_id, bot, original_filename=None):
     ai_filename = None
     
     try:
-        # Check if we're on the reports page
+        # Check if we're on the reports page (Turnitin viewer)
         current_url = page.url
         log(f"Current page URL: {current_url}")
+        
+        # Guard: ensure this is the viewer, not the inbox
+        try:
+            on_viewer = ('ev.turnitin.com/app/carta' in current_url) or bool(page.query_selector('tii-sws-submission-workspace'))
+        except Exception:
+            on_viewer = False
+        if not on_viewer:
+            raise RuntimeError("Not on Turnitin viewer page; cannot download reports")
         
         # Download Similarity Report
         log("Downloading reports...")
@@ -445,7 +469,7 @@ def download_reports(page, chat_id, bot, original_filename=None):
                 "div[role='button']:has-text('Download')",
             ]
             # Try up to 3 rounds with small delays
-            for _ in range(3):
+            for _ in range(5):
                 for opener in openers:
                     try:
                         el = p.query_selector(opener)
@@ -454,10 +478,10 @@ def download_reports(page, chat_id, bot, original_filename=None):
                         log(f"Opening download menu via selector: {opener}")
                         el.click()
                         try:
-                            p.wait_for_selector("ul.download-menu .download-menu-item button", timeout=3000)
+                            p.wait_for_selector("ul.download-menu .download-menu-item button", timeout=5000)
                             return True
                         except Exception:
-                            time.sleep(0.25)
+                            time.sleep(0.5)
                             # Try next opener if menu not visible
                     except Exception:
                         continue
