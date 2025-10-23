@@ -459,11 +459,8 @@ def download_reports(page, chat_id, bot, original_filename=None):
         # Save similarity report
         sim_filename = f"downloads/similarity_{chat_id}_{timestamp}.pdf"
         os.makedirs("downloads", exist_ok=True)
-    download.save_as(sim_filename)
-    log(f"Saved Similarity Report as {sim_filename}")
-        
-        # Downloading AI Writing Report...
-        log("Downloading AI Writing Report...")
+        download.save_as(sim_filename)
+        log(f"Saved Similarity Report as {sim_filename}")
         
         # Downloading AI Writing Report...
         log("Downloading AI Writing Report...")
@@ -515,8 +512,8 @@ def download_reports(page, chat_id, bot, original_filename=None):
         
         # Save AI report
         ai_filename = f"downloads/ai_{chat_id}_{timestamp}.pdf"
-    download2.save_as(ai_filename)
-    log(f"Saved AI Writing Report as {ai_filename}")
+        download2.save_as(ai_filename)
+        log(f"Saved AI Writing Report as {ai_filename}")
         
         # Reports downloaded - Similarity: True, AI: True
         log("Reports downloaded - Similarity: True, AI: True")
