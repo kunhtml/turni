@@ -185,8 +185,9 @@ def get_user_subscription_info(user_id):
     return subscriptions[user_id_str]
 
 def process_documents_worker(worker_id):
-    """Worker thread to process documents from queue"""
-    log(f"Worker {worker_id} started")
+    """Worker thread to process documents from queue - SINGLE WORKER MODE (sequential processing)"""
+    log(f"[Worker-{worker_id}] 🚀 Starting worker in SINGLE WORKER MODE")
+    log(f"[Worker-{worker_id}] ℹ️  All documents will be processed sequentially, one at a time")
     
     # Pre-login to Turnitin when worker starts - don't wait for first document
     log(f"[Worker-{worker_id}] Initializing browser and logging in...")
@@ -205,31 +206,32 @@ def process_documents_worker(worker_id):
     
     while True:
         try:
+            # Block and wait for next item in queue (FIFO - First In First Out)
             queue_item = processing_queue.get()
             
             if queue_item is None:  # Shutdown signal
-                log(f"Worker {worker_id} shutting down")
+                log(f"[Worker-{worker_id}] Shutdown signal received")
                 break
             
-            # If there are multiple items in queue, add delay to prevent server overload
+            # Check queue size for information
             queue_size = processing_queue.qsize()
-            if queue_size >= 2:
-                delay_seconds = 5 * (worker_id - 1)  # Worker 1: 0s, Worker 2: 5s, Worker 3: 10s
-                if delay_seconds > 0:
-                    log(f"Worker {worker_id} waiting {delay_seconds}s to prevent server overload (queue size: {queue_size})...")
-                    time.sleep(delay_seconds)
+            if queue_size > 0:
+                log(f"[Worker-{worker_id}] 📋 Queue status: Processing current document, {queue_size} document(s) waiting in queue")
+            else:
+                log(f"[Worker-{worker_id}] 📋 Queue status: Processing current document, no documents waiting")
             
-            log(f"Worker {worker_id} processing document for user {queue_item['user_id']}")
+            log(f"[Worker-{worker_id}] 📄 Starting to process document for user {queue_item['user_id']}")
             
             try:
                 bot.send_message(
                     queue_item['user_id'], 
-                    f"📄 Your document is now being processed by Worker {worker_id}..."
+                    f"📄 <b>Your document is now being processed...</b>\n\n"
+                    f"⏳ Please wait while we generate your reports."
                 )
             except Exception as msg_error:
-                log(f"Error sending processing message: {msg_error}")
+                log(f"[Worker-{worker_id}] Error sending processing message: {msg_error}")
             
-            # Process the document
+            # Process the document (SEQUENTIAL - completes entire workflow before next document)
             try:
                 # Update queue item status
                 queue_item['status'] = 'processing'
@@ -237,8 +239,9 @@ def process_documents_worker(worker_id):
                 queue_item['worker_id'] = worker_id
 
                 # Pass the bot instance to the processor
+                log(f"[Worker-{worker_id}] 🔄 Calling turnitin_processor...")
                 submission_info = process_turnitin(queue_item['file_path'], queue_item['user_id'], bot)
-                log(f"Worker {worker_id} successfully processed document for user {queue_item['user_id']}")
+                log(f"[Worker-{worker_id}] ✅ Successfully processed document for user {queue_item['user_id']}")
 
                 # Update queue item status
                 queue_item['status'] = 'completed'
@@ -314,41 +317,33 @@ def scale_workers():
             log(f"Started Worker {worker_id} (Queue size: {queue_size}, Active workers: {active_workers + i + 1})")
 
 def start_processing_worker():
-    """Start all document processing worker threads with sequential initialization"""
+    """Start single document processing worker thread (SEQUENTIAL MODE)"""
     global worker_threads
     
-    log("=" * 60)
-    log("🚀 STARTING WORKER INITIALIZATION SEQUENCE")
-    log("=" * 60)
+    log("=" * 70)
+    log("🚀 STARTING SINGLE WORKER MODE")
+    log("=" * 70)
+    log("ℹ️  Configuration: MAX_WORKERS = 1 (Sequential Processing)")
+    log("ℹ️  Documents will be processed one at a time, from start to finish")
+    log("ℹ️  Next document will only start after previous one completes")
+    log("=" * 70)
     
-    # Start workers sequentially with sufficient delay to prevent login conflicts
-    for worker_id in range(1, MAX_WORKERS + 1):
-        log(f"\n{'='*60}")
-        log(f"📌 STARTING WORKER {worker_id} INITIALIZATION")
-        log(f"{'='*60}")
-        
-        worker = threading.Thread(
-            target=process_documents_worker, 
-            args=(worker_id,),
-            daemon=True,
-            name=f"Worker-{worker_id}"
-        )
-        worker.start()
-        worker_threads.append(worker)
-        log(f"✅ Worker {worker_id} thread created and started")
-        
-        # CRITICAL: Wait for Worker N to complete login before starting Worker N+1
-        # This prevents concurrent login attempts which cause errors
-        if worker_id < MAX_WORKERS:
-            delay_seconds = 30  # Increased from 2s to 30s to ensure complete initialization
-            log(f"⏳ Waiting {delay_seconds} seconds for Worker {worker_id} to complete login...")
-            log(f"   (Worker {worker_id + 1} will start after this delay)")
-            time.sleep(delay_seconds)
-            log(f"✅ Delay complete - ready to start Worker {worker_id + 1}\n")
+    # Start single worker
+    worker_id = 1
+    log(f"\n📌 Initializing Worker {worker_id}...")
     
-    log("\n" + "=" * 60)
-    log(f"✅ ALL {MAX_WORKERS} WORKERS INITIALIZED AND READY")
-    log("=" * 60 + "\n")
+    worker = threading.Thread(
+        target=process_documents_worker, 
+        args=(worker_id,),
+        daemon=True,
+        name=f"Worker-{worker_id}"
+    )
+    worker.start()
+    worker_threads.append(worker)
+    
+    log(f"✅ Worker {worker_id} thread created and started successfully")
+    log(f"✅ Worker is now ready to process documents sequentially")
+    log("=" * 70 + "\n")
 
 def create_main_menu():
     """Create main menu keyboard"""
@@ -537,15 +532,21 @@ def process_google_drive_link(message, drive_url):
         processing_queue.put(queue_item)
         queue_position = processing_queue.qsize()
         
-        # All 3 workers are running from startup, no need to scale
-        # scale_workers()
-        
-        # Notify user
+        # Notify user about queue status (SINGLE WORKER MODE - Sequential Processing)
         if queue_position == 1:
-            queue_message = "📄 <b>Document queued for processing</b>\n\n🚀 Your document will be processed next."
+            queue_message = (
+                "📄 <b>Document queued for processing</b>\n\n"
+                "🚀 Your document will be processed next.\n"
+                "⏳ Processing will complete from start to finish before any other document."
+            )
         else:
             estimated_wait = (queue_position - 1) * 3
-            queue_message = f"📄 <b>Document queued for processing</b>\n\n📊 Position: <b>{queue_position}</b>\n⏳ Estimated wait: <b>{estimated_wait} minutes</b>"
+            queue_message = (
+                f"📄 <b>Document queued for processing</b>\n\n"
+                f"📊 Position in queue: <b>{queue_position}</b>\n"
+                f"⏳ Estimated wait: <b>~{estimated_wait} minutes</b>\n\n"
+                f"ℹ️ Each document is processed completely (submit + download reports) before the next one starts."
+            )
         
         bot.send_message(message.chat.id, queue_message)
         log(f"Added Google Drive document to queue for user {message.chat.id}. Queue size: {queue_position}")
