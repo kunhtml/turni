@@ -390,10 +390,22 @@ def download_reports(page, chat_id, bot, original_filename=None):
         
         # Downloading reports...
         bot.send_message(chat_id, "📥 Downloading reports...")
-        
-        # Waiting for reports
-        bot.send_message(chat_id, "⏳ Waiting 60 seconds for reports...")
-        time.sleep(60)
+
+        # Adaptive readiness wait (no fixed 60s sleep)
+        bot.send_message(chat_id, "⏳ Preparing reports…")
+        try:
+            # Poll for the presence of the download opener for up to ~90s
+            start_ts = time.time()
+            while time.time() - start_ts < 90:
+                opener = page.query_selector("button[aria-label*='Download' i]") or \
+                         page.query_selector(".tii-sws-download-btn-mfe") or \
+                         page.query_selector("tii-sws-download-btn-mfe") or \
+                         page.query_selector("tii-sws-header tii-sws-download-btn-mfe")
+                if opener:
+                    break
+                time.sleep(1.5)
+        except Exception:
+            pass
         
         # Checking Similarity and AI badges in viewer (web components)
         log("Checking AI/Similarity badges for document validation...")
@@ -603,35 +615,15 @@ def download_reports(page, chat_id, bot, original_filename=None):
         
         if sim_filename and os.path.exists(sim_filename):
             log(f"Sending Similarity Report to Telegram: {sim_filename}")
-            try:
-                with open(sim_filename, 'rb') as f:
-                    bot.send_document(
-                        chat_id,
-                        f,
-                        caption="📊 <b>Similarity Report</b>",
-                        parse_mode='HTML'
-                    )
+            if send_document_with_retry(bot, chat_id, sim_filename, "📊 <b>Similarity Report</b>"):
                 reports_sent += 1
                 log("Similarity Report sent successfully to Telegram")
-            except Exception as e:
-                log(f"Error sending Similarity Report: {e}")
-                bot.send_message(chat_id, f"❌ Error sending Similarity Report: {e}")
         
         if ai_filename and os.path.exists(ai_filename):
             log(f"Sending AI Writing Report to Telegram: {ai_filename}")
-            try:
-                with open(ai_filename, 'rb') as f:
-                    bot.send_document(
-                        chat_id,
-                        f,
-                        caption="🤖 <b>AI Writing Report</b>",
-                        parse_mode='HTML'
-                    )
+            if send_document_with_retry(bot, chat_id, ai_filename, "🤖 <b>AI Writing Report</b>"):
                 reports_sent += 1
                 log("AI Writing Report sent successfully to Telegram")
-            except Exception as e:
-                log(f"Error sending AI Writing Report: {e}")
-                bot.send_message(chat_id, f"❌ Error sending AI Writing Report: {e}")
         
         # Send summary message
         if reports_sent > 0:
@@ -766,35 +758,15 @@ def send_reports_to_user(chat_id, bot, sim_filename, ai_filename, original_filen
         
         if sim_filename and os.path.exists(sim_filename):
             log(f"Sending Similarity Report to Telegram: {sim_filename}")
-            try:
-                with open(sim_filename, 'rb') as f:
-                    bot.send_document(
-                        chat_id,
-                        f,
-                        caption="📊 <b>Similarity Report</b>",
-                        parse_mode='HTML'
-                    )
+            if send_document_with_retry(bot, chat_id, sim_filename, "📊 <b>Similarity Report</b>"):
                 reports_sent += 1
                 log("Similarity Report sent successfully to Telegram")
-            except Exception as e:
-                log(f"Error sending Similarity Report: {e}")
-                bot.send_message(chat_id, f"❌ Error sending Similarity Report: {e}")
         
         if ai_filename and os.path.exists(ai_filename):
             log(f"Sending AI Writing Report to Telegram: {ai_filename}")
-            try:
-                with open(ai_filename, 'rb') as f:
-                    bot.send_document(
-                        chat_id,
-                        f,
-                        caption="🤖 <b>AI Writing Report</b>",
-                        parse_mode='HTML'
-                    )
+            if send_document_with_retry(bot, chat_id, ai_filename, "🤖 <b>AI Writing Report</b>"):
                 reports_sent += 1
                 log("AI Writing Report sent successfully to Telegram")
-            except Exception as e:
-                log(f"Error sending AI Writing Report: {e}")
-                bot.send_message(chat_id, f"❌ Error sending AI Writing Report: {e}")
         
         # Send summary message
         if reports_sent > 0:
@@ -815,6 +787,46 @@ def send_reports_to_user(chat_id, bot, sim_filename, ai_filename, original_filen
         log(f"Error in report delivery: {e}")
         bot.send_message(chat_id, f"⚠️ Error delivering reports: {e}")
         return 0
+
+
+    def send_document_with_retry(bot, chat_id, file_path, caption, parse_mode='HTML', attempts=3, base_delay=2):
+        """Send a document to Telegram with retries and a fallback to Filebin link on failure.
+        Returns True if sent successfully, False otherwise.
+        """
+        for attempt in range(1, attempts + 1):
+            try:
+                with open(file_path, 'rb') as f:
+                    bot.send_document(
+                        chat_id,
+                        f,
+                        caption=caption,
+                        parse_mode=parse_mode,
+                        timeout=120
+                    )
+                return True
+            except Exception as e:
+                log(f"send_document_with_retry attempt {attempt} failed: {e}")
+                if attempt < attempts:
+                    # exponential backoff with small jitter
+                    delay = base_delay * (2 ** (attempt - 1))
+                    try:
+                        time.sleep(delay)
+                    except Exception:
+                        pass
+                else:
+                    # Final failure: upload to Filebin and send link
+                    url = upload_file_to_filebin(file_path)
+                    if url:
+                        try:
+                            bot.send_message(chat_id, f"❗ Unable to send file directly due to network timeout. Here is a download link: {url}")
+                        except Exception as e2:
+                            log(f"Failed to send Filebin link message: {e2}")
+                    else:
+                        try:
+                            bot.send_message(chat_id, f"❗ Unable to send file directly and upload fallback failed: {os.path.basename(file_path)}")
+                        except Exception as e3:
+                            log(f"Failed to send failure message: {e3}")
+                    return False
 
 
 def download_reports_with_retry(page, chat_id, bot, original_filename=None, retries=3, retry_delay=5):
