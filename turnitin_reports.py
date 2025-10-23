@@ -55,6 +55,46 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
         page.wait_for_load_state("networkidle", timeout=30000)
         time.sleep(2)
 
+        # Sort/refresh the table by clicking on a column header (like Paper ID)
+        # This ensures the table data is fully loaded and sorted
+        log(f"[{worker_name}] Triggering table sort/refresh...")
+        try:
+            # Try clicking on table header to trigger sort and load data
+            sort_selectors = [
+                'th a',                           # Header link
+                'a[href*="t_inbox.asp"]',        # Inbox navigation link
+                'table th a',                    # Specific table header
+                'a[title*="Paper"]',             # Paper ID header
+            ]
+            
+            sort_clicked = False
+            for sort_selector in sort_selectors:
+                try:
+                    header_link = page.query_selector(sort_selector)
+                    if header_link:
+                        log(f"[{worker_name}] Found header link, clicking to trigger sort...")
+                        header_link.click()
+                        sort_clicked = True
+                        
+                        # Wait for table to reload after sort click
+                        try:
+                            page.wait_for_load_state('domcontentloaded', timeout=15000)
+                            page.wait_for_load_state('networkidle', timeout=15000)
+                            log(f"[{worker_name}] Table loaded after sort click")
+                        except Exception as load_err:
+                            log(f"[{worker_name}] Load wait after sort: {load_err}")
+                        
+                        time.sleep(1)
+                        break
+                except Exception as header_err:
+                    continue
+            
+            if not sort_clicked:
+                log(f"[{worker_name}] Could not find header to sort, will search anyway")
+                
+        except Exception as sort_error:
+            log(f"[{worker_name}] Sort/refresh error: {sort_error}")
+
         # Look for submission link with exact title match (not prefix)
         log(f"[{worker_name}] Searching for submission: '{submission_title}'")
         
@@ -99,11 +139,16 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                         cells = row.query_selector_all("td")
                         if len(cells) > 0:
                             # Get the submission title from first cell
-                            title_text = cells[0].inner_text().strip()
+                            # Try to get text from nested link first, then fallback to cell text
+                            cell_link = cells[0].query_selector("a")
+                            if cell_link:
+                                title_text = cell_link.inner_text().strip()
+                            else:
+                                title_text = cells[0].inner_text().strip()
                             
                             # Debug: Log first few titles to understand table structure
                             if row_idx < 3:
-                                log(f"[{worker_name}] Row {row_idx}: '{title_text}'")
+                                log(f"[{worker_name}] Row {row_idx}: '{title_text}' (cells: {len(cells)})")
                             
                             # Exact match instead of prefix match
                             if title_text == submission_title:
