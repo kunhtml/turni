@@ -665,13 +665,50 @@ def download_reports(page, chat_id, bot, original_filename=None):
         # Downloading AI Writing Report...
         log(f"[{worker_name}] Downloading AI Writing Report...")
 
-        # Use explicit AI menu item (li[2]) per provided markup
-        download2 = menu_click_download(
-            page,
-            "ul.download-menu li:nth-child(2) button",
-            timeout_ms=90000,
-            description="ai",
-        )
+        # Method 1: Try the new xpath-based approach with popover
+        download2 = None
+        try:
+            # Click download button to open popover menu
+            download_btn_xpath = "//tii-sws-header//tii-sws-download-btn-mfe//tdl-popover"
+            download_btn = page.query_selector(f"xpath={download_btn_xpath}")
+            if not download_btn:
+                # Fallback selectors for download button
+                download_btn = page.query_selector("tii-sws-header tii-sws-download-btn-mfe") or \
+                              page.query_selector("tii-sws-download-btn-mfe") or \
+                              page.query_selector("button[aria-label*='Download' i]")
+            
+            if download_btn:
+                log(f"[{worker_name}] Opening download menu for AI report...")
+                download_btn.click()
+                page.wait_for_timeout(1000)
+                
+                # Click on "AI Writing Report" span in the menu
+                ai_report_item = page.query_selector("span:has-text('AI Writing Report')") or \
+                                page.query_selector("button:has-text('AI Writing Report')")
+                if ai_report_item:
+                    with page.expect_download(timeout=90000) as di2:
+                        log(f"[{worker_name}] Clicking 'AI Writing Report' menu item...")
+                        # Click the parent button if we found a span
+                        if ai_report_item.evaluate("el => el.tagName") == "SPAN":
+                            parent_btn = ai_report_item.evaluate_handle("el => el.closest('button')")
+                            if parent_btn:
+                                parent_btn.as_element().click()
+                            else:
+                                ai_report_item.click()
+                        else:
+                            ai_report_item.click()
+                    download2 = di2.value
+        except Exception as e:
+            log(f"[{worker_name}] Method 1 (xpath popover) failed: {e}")
+
+        # Method 2: Use explicit AI menu item (li[2]) per previous markup
+        if not download2:
+            download2 = menu_click_download(
+                page,
+                "ul.download-menu li:nth-child(2) button",
+                timeout_ms=90000,
+                description="ai",
+            )
         if not download2:
             # Fallback by data-px attribute
             download2 = menu_click_download(
