@@ -309,8 +309,38 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                                                     pass
                                                 time.sleep(2)
                                                 random_wait(1, 2)
-                                                log(f"[{worker_name}] Submission page fully loaded after double click, returning page object")
-                                                return page
+                                                log(f"[{worker_name}] Submission page fully loaded after double click")
+                                                # If we didn't land on the viewer, try clicking the Similarity report link in the row to open the viewer
+                                                current_after_click = page.url
+                                                if ("ev.turnitin.com" in current_after_click) or ("newreport" in current_after_click) or ("paper_frameset" in current_after_click):
+                                                    log(f"[{worker_name}] Detected viewer URL after double click: {current_after_click}")
+                                                    return page
+                                                else:
+                                                    try:
+                                                        report_link = row.query_selector("td.or_report_cell .or_full_version a, td.or_report_cell a.or-link")
+                                                        if report_link:
+                                                            with page.expect_popup(timeout=5000) as popup_info2:
+                                                                log(f"[{worker_name}] Double-click did not navigate; opening Similarity report link via popup...")
+                                                                report_link.click()
+                                                            new_page2 = popup_info2.value
+                                                            try:
+                                                                new_page2.wait_for_load_state('domcontentloaded', timeout=30000)
+                                                            except Exception:
+                                                                pass
+                                                            try:
+                                                                new_page2.wait_for_load_state('networkidle', timeout=30000)
+                                                            except Exception:
+                                                                pass
+                                                            time.sleep(2)
+                                                            random_wait(1, 2)
+                                                            log(f"[{worker_name}] Opened viewer from Similarity report link successfully")
+                                                            return new_page2
+                                                        else:
+                                                            log(f"[{worker_name}] Could not find Similarity report link in row for fallback")
+                                                    except Exception as link_err:
+                                                        log(f"[{worker_name}] Error opening Similarity report link: {link_err}")
+                                                    # As a last resort, return the current page
+                                                    return page
                                             else:
                                                 log(f"[{worker_name}] Error: Title link not found for second click")
                                 except Exception as click_error:
@@ -394,21 +424,23 @@ def download_reports(page, chat_id, bot, original_filename=None):
                 ".tii-sws-download-btn-mfe",
                 "div[role='button']:has-text('Download')",
             ]
-            for opener in openers:
-                try:
-                    el = p.query_selector(opener)
-                    if not el:
-                        continue
-                    log(f"Opening download menu via selector: {opener}")
-                    el.click()
+            # Try up to 3 rounds with small delays
+            for _ in range(3):
+                for opener in openers:
                     try:
-                        p.wait_for_selector("ul.download-menu .download-menu-item button", timeout=5000)
-                        return True
+                        el = p.query_selector(opener)
+                        if not el:
+                            continue
+                        log(f"Opening download menu via selector: {opener}")
+                        el.click()
+                        try:
+                            p.wait_for_selector("ul.download-menu .download-menu-item button", timeout=3000)
+                            return True
+                        except Exception:
+                            time.sleep(0.25)
+                            # Try next opener if menu not visible
                     except Exception:
-                        time.sleep(0.2)
-                        # Try next opener if menu not visible
-                except Exception:
-                    continue
+                        continue
             return False
 
         # Prefer menu-driven download as per provided markup
