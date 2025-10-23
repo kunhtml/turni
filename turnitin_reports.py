@@ -142,10 +142,6 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                     time.sleep(1)
                 else:
                     log(f"[{worker_name}] Could not re-find header element for second click, continuing anyway")
-                    
-                    time.sleep(1)
-                else:
-                    log(f"[{worker_name}] Could not re-find header element for second click, continuing anyway")
             else:
                 log(f"[{worker_name}] Could not find header to sort, will search anyway")
                 
