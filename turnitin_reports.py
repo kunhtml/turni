@@ -140,17 +140,36 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                         # Get all cells in this row
                         cells = row.query_selector_all("td")
                         if len(cells) > 0:
-                            # Get the submission title from first cell
-                            # Try to get text from nested link first, then fallback to cell text
-                            cell_link = cells[0].query_selector("a")
-                            if cell_link:
-                                title_text = cell_link.inner_text().strip()
-                            else:
-                                title_text = cells[0].inner_text().strip()
-                            
-                            # Debug: Log first few titles to understand table structure
+                            # Debug: Log ALL cell contents to understand table structure
                             if row_idx < 3:
-                                log(f"[{worker_name}] Row {row_idx}: '{title_text}' (cells: {len(cells)})")
+                                cell_contents = []
+                                for cell_idx, cell in enumerate(cells[:5]):  # First 5 cells
+                                    cell_link = cell.query_selector("a")
+                                    if cell_link:
+                                        content = cell_link.inner_text().strip()
+                                    else:
+                                        content = cell.inner_text().strip()
+                                    if content:
+                                        cell_contents.append(f"[{cell_idx}]={content}")
+                                log(f"[{worker_name}] Row {row_idx} cells: {' | '.join(cell_contents)}")
+                            
+                            # Find the title cell - it has class "ibox_title"
+                            # First try to find cell with ibox_title class
+                            title_cell = row.query_selector("td[class*='ibox_title']")
+                            if title_cell:
+                                # Get text from link inside title cell
+                                cell_link = title_cell.query_selector("a")
+                                if cell_link:
+                                    title_text = cell_link.inner_text().strip()
+                                else:
+                                    title_text = title_cell.inner_text().strip()
+                            else:
+                                # Fallback: try first cell
+                                cell_link = cells[0].query_selector("a")
+                                if cell_link:
+                                    title_text = cell_link.inner_text().strip()
+                                else:
+                                    title_text = cells[0].inner_text().strip()
                             
                             # Exact match instead of prefix match
                             if title_text == submission_title:
