@@ -568,68 +568,97 @@ def download_reports(page, chat_id, bot, original_filename=None):
         download.save_as(sim_filename)
         log(f"[{worker_name}] Saved Similarity Report as {sim_filename}")
         
-        # Check AI Writing availability by clicking tab 3 first
+        # Check AI Writing availability (more robust): detect AI indicators even if tab button isn't found
         log(f"[{worker_name}] Checking AI Writing Report availability...")
-        ai_available = True
+        ai_available = False
         try:
-            # Click AI Writing tab (tab 3)
-            ai_tab_xpath = "//tii-sws-submission-workspace//div/tii-sws-tab-navigator//div/tii-sws-tab-button[3]"
-            ai_tab = page.query_selector(f"xpath={ai_tab_xpath}")
-            if ai_tab:
-                log(f"[{worker_name}] Clicking AI Writing tab...")
-                ai_tab.click()
-                page.wait_for_timeout(3000)  # Wait for content to load
-                
-                # Primary check: Look for AI description paragraph (indicates AI is available and ready)
-                ai_description = page.query_selector("p.description:has-text('The percentage indicates the combined amount of likely AI-generated text')")
-                if ai_description:
-                    log(f"[{worker_name}] Found AI description paragraph - AI Writing Report is available and ready to download")
-                    ai_available = True
-                else:
-                    # Secondary check: "Submission Breakdown" 
-                    submission_breakdown = page.query_selector("h3.subheading:has-text('Submission Breakdown')")
-                    if submission_breakdown:
-                        log(f"[{worker_name}] Found 'Submission Breakdown' - AI Writing Report is available")
-                        ai_available = True
-                    else:
-                        # Check for unavailability message as fallback
-                        unavailable_section = page.query_selector("section.header-section.header-section-v2 h2.empty-heading")
-                        if unavailable_section:
-                            heading_text = unavailable_section.inner_text().strip()
-                            if "unavailable" in heading_text.lower():
-                                log(f"[{worker_name}] AI Writing Report is unavailable for this submission")
-                                ai_available = False
-                                
-                                # Send detailed bilingual message to user about AI report unavailability
-                                unavailability_message = (
-                                    "⚠️ <b>AI Writing Report Unavailable / Báo cáo AI không có sẵn</b>\n\n"
-                                    "📋 <b>Turnitin cannot generate AI report for this file.</b>\n"
-                                    "📋 <b>Turnitin không thể tạo báo cáo AI cho file này.</b>\n\n"
-                                    "❓ <b>Possible Reasons / Các lý do có thể:</b>\n\n"
-                                    "• 📄 <b>Unsupported file type</b> / Loại file không được hỗ trợ\n"
-                                    "   (Only supports: .doc, .docx, .pdf, .txt, .rtf, .odt, .html)\n"
-                                    "   (Chỉ hỗ trợ: .doc, .docx, .pdf, .txt, .rtf, .odt, .html)\n\n"
-                                    "• 🌍 <b>Unsupported language</b> / Ngôn ngữ không được hỗ trợ\n"
-                                    "   (Currently English only / Hiện tại chỉ hỗ trợ tiếng Anh)\n\n"
-                                    "• 📏 <b>Text too short</b> / Văn bản quá ngắn\n"
-                                    "   (Less than 300 words / Dưới 300 từ)\n\n"
-                                    "• 📚 <b>Text too long</b> / Văn bản quá dài\n"
-                                    "   (More than 30,000 words / Trên 30,000 từ)\n\n"
-                                    "• 🚫 <b>Content not eligible for AI analysis</b>\n"
-                                    "   Nội dung không đủ điều kiện để phân tích AI\n\n"
-                                    "✅ <b>You will still receive the Similarity Report</b>\n"
-                                    "✅ <b>Bạn vẫn sẽ nhận được Báo cáo Tương đồng (Similarity Report)</b>"
-                                )
-                                bot.send_message(chat_id, unavailability_message, parse_mode='HTML')
-                            else:
-                                log(f"[{worker_name}] Unexpected heading text: {heading_text}, assuming unavailable")
-                                ai_available = False
-                        else:
-                            log(f"[{worker_name}] No AI indicators found, assuming unavailable")
-                            ai_available = False
+            # Helper: check for strong AI indicators on the current page
+            def _has_ai_indicators():
+                indicators = [
+                    "p.description:has-text('The percentage indicates the combined amount of likely AI-generated text')",
+                    "h3.subheading:has-text('Submission Breakdown')",
+                    "h2.heading:has-text('detected as AI')",
+                ]
+                for sel in indicators:
+                    try:
+                        el = page.query_selector(sel)
+                        if el:
+                            log(f"[{worker_name}] AI indicator present: {sel}")
+                            return True
+                    except Exception:
+                        continue
+                return False
+
+            # 1) First try: detect indicators without switching tabs (handles cases where AI is already visible)
+            if _has_ai_indicators():
+                ai_available = True
             else:
-                log(f"[{worker_name}] AI Writing tab not found, assuming unavailable")
-                ai_available = False
+                # 2) Try clicking the AI tab using multiple selector strategies
+                tab_selectors = [
+                    "xpath=//tii-sws-submission-workspace//tii-sws-tab-navigator//tii-sws-tab-button[3]",
+                    "text=AI Writing",
+                    "aria/AI Writing",
+                    "tii-sws-tab-navigator tii-sws-tab-button:has-text('AI')",
+                ]
+                ai_tab = None
+                for sel in tab_selectors:
+                    try:
+                        ai_tab = page.query_selector(sel)
+                        if ai_tab:
+                            log(f"[{worker_name}] Found AI tab via selector: {sel}")
+                            break
+                    except Exception:
+                        continue
+
+                if ai_tab:
+                    try:
+                        log(f"[{worker_name}] Clicking AI Writing tab…")
+                        ai_tab.click()
+                        page.wait_for_timeout(3000)
+                    except Exception as click_err:
+                        log(f"[{worker_name}] AI tab click failed: {click_err}")
+
+                    # Re-check indicators after attempting to open the tab
+                    if _has_ai_indicators():
+                        ai_available = True
+                else:
+                    log(f"[{worker_name}] AI tab not found; will rely on content-based indicators")
+                    # Final content check before deciding unavailable
+                    ai_available = _has_ai_indicators()
+
+            # 3) If still not available, verify explicit unavailability banner before notifying user
+            if not ai_available:
+                try:
+                    unavailable_section = page.query_selector("section.header-section.header-section-v2 h2.empty-heading")
+                    if unavailable_section:
+                        heading_text = (unavailable_section.inner_text() or "").strip()
+                        if "unavailable" in heading_text.lower():
+                            log(f"[{worker_name}] AI Writing Report explicitly marked unavailable by UI")
+                            # Send detailed bilingual message to user about AI report unavailability
+                            unavailability_message = (
+                                "⚠️ <b>AI Writing Report Unavailable / Báo cáo AI không có sẵn</b>\n\n"
+                                "📋 <b>Turnitin cannot generate AI report for this file.</b>\n"
+                                "📋 <b>Turnitin không thể tạo báo cáo AI cho file này.</b>\n\n"
+                                "❓ <b>Possible Reasons / Các lý do có thể:</b>\n\n"
+                                "• 📄 <b>Unsupported file type</b> / Loại file không được hỗ trợ\n"
+                                "   (Only supports: .doc, .docx, .pdf, .txt, .rtf, .odt, .html)\n"
+                                "   (Chỉ hỗ trợ: .doc, .docx, .pdf, .txt, .rtf, .odt, .html)\n\n"
+                                "• 🌍 <b>Unsupported language</b> / Ngôn ngữ không được hỗ trợ\n"
+                                "   (Currently English only / Hiện tại chỉ hỗ trợ tiếng Anh)\n\n"
+                                "• 📏 <b>Text too short</b> / Văn bản quá ngắn\n"
+                                "   (Less than 300 words / Dưới 300 từ)\n\n"
+                                "• 📚 <b>Text too long</b> / Văn bản quá dài\n"
+                                "   (More than 30,000 words / Trên 30,000 từ)\n\n"
+                                "• 🚫 <b>Content not eligible for AI analysis</b>\n"
+                                "   Nội dung không đủ điều kiện để phân tích AI\n\n"
+                                "✅ <b>You will still receive the Similarity Report</b>\n"
+                                "✅ <b>Bạn vẫn sẽ nhận được Báo cáo Tương đồng (Similarity Report)</b>"
+                            )
+                            bot.send_message(chat_id, unavailability_message, parse_mode='HTML')
+                        else:
+                            log(f"[{worker_name}] Unrecognized empty-heading text: {heading_text}")
+                except Exception as unavail_err:
+                    log(f"[{worker_name}] Error checking explicit unavailability banner: {unavail_err}")
         except Exception as e:
             log(f"[{worker_name}] Error checking AI availability: {e}")
             ai_available = False

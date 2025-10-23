@@ -12,6 +12,12 @@ from dotenv import load_dotenv
 import telebot
 from telebot import types
 from turnitin_processor import process_turnitin, shutdown_browser_session
+from rate_limiter import (
+    check_user_cooldown, 
+    set_user_cooldown, 
+    get_cooldown_message,
+    clear_user_cooldown
+)
 
 # Load environment variables
 load_dotenv()
@@ -1116,6 +1122,36 @@ Contact admin for more information."""
     
     log(f"Subscription stopped for user {target_user_id}. Old plan: {old_sub_info}")
 
+@bot.message_handler(commands=['clearcooldown'])
+def clear_cooldown_command(message):
+    """Admin command to clear cooldown for a user"""
+    if message.from_user.id not in ADMIN_TELEGRAM_IDS:
+        return
+    
+    try:
+        parts = message.text.split(' ')
+        target_user_id = int(parts[1])
+    except (IndexError, ValueError):
+        bot.reply_to(message, 
+            "❌ Usage: /clearcooldown <user_id>\n\n"
+            "Example: /clearcooldown 123456789\n"
+            "(Xóa cooldown cho user ID 123456789)")
+        return
+    
+    if clear_user_cooldown(target_user_id):
+        bot.reply_to(message, f"✅ Đã xóa cooldown cho user {target_user_id}")
+        
+        # Try to notify user
+        try:
+            bot.send_message(target_user_id, 
+                "✅ <b>Cooldown Cleared / Đã xóa thời gian chờ</b>\n\n"
+                "You can now upload documents immediately.\n"
+                "Bạn có thể gửi file ngay bây giờ.")
+        except:
+            pass
+    else:
+        bot.reply_to(message, f"❌ User {target_user_id} không có cooldown")
+
 @bot.message_handler(func=lambda message: message.text and 'drive.google.com' in message.text)
 def handle_google_drive_link(message):
     """Handle Google Drive links"""
@@ -1123,9 +1159,17 @@ def handle_google_drive_link(message):
     
     log(f"DEBUG: Google Drive link received from user {user_id}")
     
-    # Admin has unlimited access
+    # Admin has unlimited access and no cooldown
     if user_id in ADMIN_TELEGRAM_IDS:
         process_google_drive_link(message, message.text.strip())
+        return
+    
+    # Check cooldown first
+    is_in_cooldown, remaining_seconds, cooldown_end = check_user_cooldown(user_id)
+    if is_in_cooldown:
+        cooldown_msg = get_cooldown_message(remaining_seconds, cooldown_end)
+        bot.reply_to(message, cooldown_msg)
+        log(f"User {user_id} blocked by cooldown: {remaining_seconds}s remaining")
         return
     
     # Check subscription
@@ -1160,6 +1204,10 @@ def handle_google_drive_link(message):
     else:
         remaining_msg = ""
     
+    # Set cooldown for this user (10 minutes)
+    set_user_cooldown(user_id)
+    log(f"Set 10-minute cooldown for user {user_id}")
+    
     # Process the Google Drive link
     process_google_drive_link(message, message.text.strip())
 
@@ -1170,10 +1218,18 @@ def handle_document(message):
     
     log(f"DEBUG: Document received from user {user_id}")
     
-    # Admin has unlimited access
+    # Admin has unlimited access and no cooldown
     if user_id in ADMIN_TELEGRAM_IDS:
-        log("User is admin - bypassing subscription check")
+        log("User is admin - bypassing subscription check and cooldown")
         process_user_document(message)
+        return
+    
+    # Check cooldown first
+    is_in_cooldown, remaining_seconds, cooldown_end = check_user_cooldown(user_id)
+    if is_in_cooldown:
+        cooldown_msg = get_cooldown_message(remaining_seconds, cooldown_end)
+        bot.reply_to(message, cooldown_msg)
+        log(f"User {user_id} blocked by cooldown: {remaining_seconds}s remaining")
         return
     
     # Check subscription
@@ -1211,6 +1267,10 @@ def handle_document(message):
         log(f"User {user_id} documents_remaining updated to {remaining} (document-based subscription)")
     else:
         log(f"User {user_id} time-based subscription - proceeding to process")
+    
+    # Set cooldown for this user (10 minutes)
+    set_user_cooldown(user_id)
+    log(f"Set 10-minute cooldown for user {user_id}")
     
     # Process the document
     process_user_document(message)
