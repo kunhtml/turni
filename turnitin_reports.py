@@ -688,8 +688,9 @@ def send_reports_to_user(chat_id, bot, sim_filename, ai_filename, original_filen
 
 
     def send_document_with_retry(bot, chat_id, file_path, caption, parse_mode='HTML', attempts=3, base_delay=2):
-        """Send a document to Telegram with retries and a fallback to Filebin link on failure.
+        """Send a document to Telegram with retries.
         Returns True if sent successfully, False otherwise.
+        Direct Telegram upload only; no fallback to external hosting.
         """
         for attempt in range(1, attempts + 1):
             try:
@@ -712,18 +713,11 @@ def send_reports_to_user(chat_id, bot, sim_filename, ai_filename, original_filen
                     except Exception:
                         pass
                 else:
-                    # Final failure: upload to Filebin and send link
-                    url = upload_file_to_filebin(file_path)
-                    if url:
-                        try:
-                            bot.send_message(chat_id, f"❗ Unable to send file directly due to network timeout. Here is a download link: {url}")
-                        except Exception as e2:
-                            log(f"Failed to send Filebin link message: {e2}")
-                    else:
-                        try:
-                            bot.send_message(chat_id, f"❗ Unable to send file directly and upload fallback failed: {os.path.basename(file_path)}")
-                        except Exception as e3:
-                            log(f"Failed to send failure message: {e3}")
+                    # Final failure: log and return False
+                    try:
+                        bot.send_message(chat_id, f"❗ Unable to send file after {attempts} attempts: {os.path.basename(file_path)}")
+                    except Exception as e2:
+                        log(f"Failed to send failure notification: {e2}")
                     return False
 
 
