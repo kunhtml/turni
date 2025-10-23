@@ -134,7 +134,24 @@ def show_user_subscription(call, bot, is_user_subscribed, get_user_subscription_
     
     user_info = get_user_subscription_info(user_id)
     
-    if sub_type == "monthly":
+    if sub_type == "time":
+        # Time-based subscription (unlimited uploads)
+        start_date = datetime.fromisoformat(user_info["start_date"]).strftime("%d %b %Y")
+        end_date = datetime.fromisoformat(user_info["end_date"]).strftime("%d %b %Y, %H:%M")
+        duration_days = user_info.get("duration_days", "N/A")
+        
+        subscription_text = f"""✅ <b>Active Time-Based Subscription</b>
+
+⏰ <b>Duration:</b> {duration_days} days
+📅 <b>Start Date:</b> {start_date}
+📆 <b>End Date:</b> {end_date}
+💳 <b>Status:</b> Active
+📤 <b>Uploads:</b> Unlimited
+
+📄 Send me a document to get your Turnitin reports!"""
+    
+    elif sub_type == "monthly":
+        # Monthly subscription
         end_date = datetime.fromisoformat(user_info["end_date"]).strftime("%Y-%m-%d")
         plan_name = user_info.get("plan_name", "Monthly")
         
@@ -146,8 +163,9 @@ def show_user_subscription(call, bot, is_user_subscribed, get_user_subscription_
 
 📄 Send me a document to get your Turnitin reports!"""
     
-    else:  # document-based
-        docs_remaining = user_info["documents_remaining"]
+    elif sub_type == "document":
+        # Document-based subscription
+        docs_remaining = user_info.get("documents_remaining", 0)
         docs_total = user_info.get("documents_total", docs_remaining)
         docs_used = docs_total - docs_remaining
         
@@ -155,6 +173,14 @@ def show_user_subscription(call, bot, is_user_subscribed, get_user_subscription_
 
 📄 <b>Documents Remaining:</b> {docs_remaining}
 📊 <b>Documents Used:</b> {docs_used}/{docs_total}
+💳 <b>Status:</b> Active
+
+📄 Send me a document to get your Turnitin reports!"""
+    
+    else:
+        # Unknown subscription type (fallback)
+        subscription_text = """✅ <b>Active Subscription</b>
+
 💳 <b>Status:</b> Active
 
 📄 Send me a document to get your Turnitin reports!"""

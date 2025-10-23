@@ -34,7 +34,7 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode='HTML')
 # Processing queue and worker threads
 processing_queue = queue.Queue()
 worker_threads = []
-MAX_WORKERS = 2  # Maximum 1 concurrent worker
+MAX_WORKERS = 1  # Maximum 1 concurrent worker
 MIN_QUEUE_SIZE_FOR_SCALING = 2  # Start additional workers when queue has 2+ items
 
 # Subscription plans
@@ -314,11 +314,19 @@ def scale_workers():
             log(f"Started Worker {worker_id} (Queue size: {queue_size}, Active workers: {active_workers + i + 1})")
 
 def start_processing_worker():
-    """Start all 3 document processing worker threads"""
+    """Start all document processing worker threads with sequential initialization"""
     global worker_threads
     
-    # Start 3 workers initially - they will wait for tasks in queue
+    log("=" * 60)
+    log("🚀 STARTING WORKER INITIALIZATION SEQUENCE")
+    log("=" * 60)
+    
+    # Start workers sequentially with sufficient delay to prevent login conflicts
     for worker_id in range(1, MAX_WORKERS + 1):
+        log(f"\n{'='*60}")
+        log(f"📌 STARTING WORKER {worker_id} INITIALIZATION")
+        log(f"{'='*60}")
+        
         worker = threading.Thread(
             target=process_documents_worker, 
             args=(worker_id,),
@@ -327,11 +335,20 @@ def start_processing_worker():
         )
         worker.start()
         worker_threads.append(worker)
-        log(f"Worker {worker_id} started")
+        log(f"✅ Worker {worker_id} thread created and started")
         
-        # Stagger startup by 2 seconds to avoid simultaneous initialization
+        # CRITICAL: Wait for Worker N to complete login before starting Worker N+1
+        # This prevents concurrent login attempts which cause errors
         if worker_id < MAX_WORKERS:
-            time.sleep(2)
+            delay_seconds = 30  # Increased from 2s to 30s to ensure complete initialization
+            log(f"⏳ Waiting {delay_seconds} seconds for Worker {worker_id} to complete login...")
+            log(f"   (Worker {worker_id + 1} will start after this delay)")
+            time.sleep(delay_seconds)
+            log(f"✅ Delay complete - ready to start Worker {worker_id + 1}\n")
+    
+    log("\n" + "=" * 60)
+    log(f"✅ ALL {MAX_WORKERS} WORKERS INITIALIZED AND READY")
+    log("=" * 60 + "\n")
 
 def create_main_menu():
     """Create main menu keyboard"""
@@ -650,12 +667,22 @@ def send_welcome(message):
     
     if is_subscribed:
         user_info = get_user_subscription_info(user_id)
-        if sub_type == "monthly":
+        
+        if sub_type == "time":
+            # Time-based subscription
+            end_date = datetime.fromisoformat(user_info["end_date"]).strftime("%Y-%m-%d %H:%M")
+            welcome_text = f"<b>Welcome back!</b>\n\nYour subscription is active until: <b>{end_date}</b>\n\n✅ Unlimited uploads!\n\nSend me a document to get Turnitin reports!"
+        elif sub_type == "monthly":
+            # Monthly subscription
             end_date = datetime.fromisoformat(user_info["end_date"]).strftime("%Y-%m-%d")
             welcome_text = f"<b>Welcome back!</b>\n\nYour monthly subscription is active until: <b>{end_date}</b>\n\nSend me a document to get Turnitin reports!"
-        else:
-            docs_remaining = user_info["documents_remaining"]
+        elif sub_type == "document":
+            # Document-based subscription
+            docs_remaining = user_info.get("documents_remaining", 0)
             welcome_text = f"<b>Welcome back!</b>\n\nYou have <b>{docs_remaining}</b> document(s) remaining.\n\nSend me a document to get Turnitin reports!"
+        else:
+            # Unknown subscription type (fallback)
+            welcome_text = "<b>Welcome back!</b>\n\nYour subscription is active.\n\nSend me a document to get Turnitin reports!"
         
         bot.send_message(user_id, welcome_text)
     else:

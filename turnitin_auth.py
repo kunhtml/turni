@@ -31,6 +31,9 @@ submission_search_lock = threading.Lock()
 # Thread-safety lock for login process (only one thread logs in at a time)
 login_lock = threading.Lock()
 
+# Thread-safety lock for entire session initialization (prevents concurrent worker setup)
+session_init_lock = threading.Lock()
+
 # Rotating user agents for better success rate
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -232,128 +235,141 @@ def get_or_create_browser_session():
             log(f"[{threading.current_thread().name}] Existing session invalid: {e}, creating new session")
             cleanup_browser_session()
     
-    # Create new session
-    log(f"[{threading.current_thread().name}] Creating new browser session...")
-    
-    try:
-        # Start Playwright with thread-safety lock
-        with playwright_lock:
-            browser_session['playwright'] = sync_playwright().start()
+    # CRITICAL: Acquire session initialization lock
+    # This ensures only ONE worker initializes browser at a time
+    # Worker 1 must complete entire setup (browser + login + navigate) before Worker 2 starts
+    log(f"[{threading.current_thread().name}] Waiting for session initialization lock...")
+    with session_init_lock:
+        log(f"[{threading.current_thread().name}] ✅ Acquired session initialization lock - starting browser setup...")
         
-        # Get a working proxy with testing and rotation
-        proxy_info = get_working_proxy()
-        
-        # Prepare browser launch options
-        launch_options = {
-            'headless': True,
-            'args': [
-                '--no-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--disable-extensions',
-                '--no-first-run',
-                '--disable-default-apps',
-                '--disable-web-security',
-                '--disable-features=VizDisplayCompositor'
-            ]
-        }
-        
-        # Add Webshare proxy configuration if available
-        if proxy_info:
-            proxy_config = {
-                "server": f"http://{proxy_info['proxy_address']}:{proxy_info['port']}",
-                "username": proxy_info['username'],
-                "password": proxy_info['password']
-            }
-            launch_options['proxy'] = proxy_config
-            browser_session['current_proxy'] = proxy_info
-            log(f"Using tested proxy: {proxy_info['proxy_address']}:{proxy_info['port']}")
-        else:
-            log("No proxy configured, using direct connection")
-        
-        # Launch browser with proxy support
-        browser_session['browser'] = browser_session['playwright'].chromium.launch(**launch_options)
-        
-        # Create context with enhanced anti-detection
-        context_options = {
-            'viewport': {'width': 1920, 'height': 1080},
-            'user_agent': random.choice(USER_AGENTS),
-            'extra_http_headers': {
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-User': '?1',
-                'Sec-Fetch-Dest': 'document',
-                'Cache-Control': 'max-age=0'
-            },
-            'java_script_enabled': True,
-            'accept_downloads': True,
-            'ignore_https_errors': True
-        }
-        
-        # Load cookies if available (but validate them first)
-        cookies_path = "cookies.json"
-        should_load_cookies = False
-        
-        if os.path.exists(cookies_path):
+        try:
+            # Create new session
+            log(f"[{threading.current_thread().name}] Creating new browser session...")
+            
             try:
-                # Validate cookies have session tokens
-                import json
-                with open(cookies_path, 'r', encoding='utf-8') as f:
-                    cookie_data = json.load(f)
-                    cookies = cookie_data.get('cookies', [])
-                    
-                    # Check if we have important session cookies
-                    important_cookies = ['session-id', 't', 'apt.sid', 'cwr_s']
-                    has_important = any(c['name'] in important_cookies for c in cookies)
-                    
-                    # Check if cookies are not expired
-                    current_time = time.time()
-                    valid_cookies = [c for c in cookies if c.get('expires', -1) > current_time or c.get('expires', -1) == -1]
-                    
-                    if has_important and len(valid_cookies) > 0:
-                        context_options['storage_state'] = cookies_path
-                        should_load_cookies = True
-                        log(f"Loading saved cookies: {len(valid_cookies)}/{len(cookies)} valid")
+                # Start Playwright with thread-safety lock
+                with playwright_lock:
+                    browser_session['playwright'] = sync_playwright().start()
+                
+                # Get a working proxy with testing and rotation
+                proxy_info = get_working_proxy()
+                
+                # Prepare browser launch options
+                launch_options = {
+                    'headless': True,
+                    'args': [
+                        '--no-sandbox',
+                        '--disable-dev-shm-usage',
+                        '--disable-gpu',
+                        '--disable-extensions',
+                        '--no-first-run',
+                        '--disable-default-apps',
+                        '--disable-web-security',
+                        '--disable-features=VizDisplayCompositor'
+                    ]
+                }
+                
+                # Add Webshare proxy configuration if available
+                if proxy_info:
+                    proxy_config = {
+                        "server": f"http://{proxy_info['proxy_address']}:{proxy_info['port']}",
+                        "username": proxy_info['username'],
+                        "password": proxy_info['password']
+                    }
+                    launch_options['proxy'] = proxy_config
+                    browser_session['current_proxy'] = proxy_info
+                    log(f"Using tested proxy: {proxy_info['proxy_address']}:{proxy_info['port']}")
+                else:
+                    log("No proxy configured, using direct connection")
+                
+                # Launch browser with proxy support
+                browser_session['browser'] = browser_session['playwright'].chromium.launch(**launch_options)
+                
+                # Create context with enhanced anti-detection
+                context_options = {
+                    'viewport': {'width': 1920, 'height': 1080},
+                    'user_agent': random.choice(USER_AGENTS),
+                    'extra_http_headers': {
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1',
+                        'Sec-Fetch-Site': 'none',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-User': '?1',
+                        'Sec-Fetch-Dest': 'document',
+                        'Cache-Control': 'max-age=0'
+                    },
+                    'java_script_enabled': True,
+                    'accept_downloads': True,
+                    'ignore_https_errors': True
+                }
+                
+                # Load cookies if available (but validate them first)
+                cookies_path = "cookies.json"
+                should_load_cookies = False
+                
+                if os.path.exists(cookies_path):
+                    try:
+                        # Validate cookies have session tokens
+                        import json
+                        with open(cookies_path, 'r', encoding='utf-8') as f:
+                            cookie_data = json.load(f)
+                            cookies = cookie_data.get('cookies', [])
+                            
+                            # Check if we have important session cookies
+                            important_cookies = ['session-id', 't', 'apt.sid', 'cwr_s']
+                            has_important = any(c['name'] in important_cookies for c in cookies)
+                            
+                            # Check if cookies are not expired
+                            current_time = time.time()
+                            valid_cookies = [c for c in cookies if c.get('expires', -1) > current_time or c.get('expires', -1) == -1]
+                            
+                            if has_important and len(valid_cookies) > 0:
+                                context_options['storage_state'] = cookies_path
+                                should_load_cookies = True
+                                log(f"Loading saved cookies: {len(valid_cookies)}/{len(cookies)} valid")
+                            else:
+                                log(f"Cookies expired or missing session info (valid: {len(valid_cookies)}/{len(cookies)})")
+                    except Exception as e:
+                        log(f"Could not validate cookies: {e}, creating fresh session")
+                else:
+                    log("No saved cookies found, creating fresh session")
+                
+                browser_session['context'] = browser_session['browser'].new_context(**context_options)
+                browser_session['page'] = browser_session['context'].new_page()
+                
+                # Test proxy connection in browser if configured
+                if proxy_info:
+                    if test_browser_proxy(browser_session['page'], proxy_info):
+                        log("Browser proxy verification successful")
                     else:
-                        log(f"Cookies expired or missing session info (valid: {len(valid_cookies)}/{len(cookies)})")
+                        log("Browser proxy verification failed, but continuing...")
+                
+                # Check if we need to login
+                if check_and_perform_login():
+                    browser_session['logged_in'] = True
+                    browser_session['last_activity'] = datetime.now()
+                    log(f"[{threading.current_thread().name}] ✅ Browser session created and logged in successfully")
+                    
+                    # Double-check page is not None
+                    if browser_session['page'] is None:
+                        raise Exception("Page is None after login")
+                    
+                    log(f"[{threading.current_thread().name}] ✅ Session initialization complete - releasing lock")
+                    return browser_session['page']
+                else:
+                    raise Exception("Login failed")
+                    
             except Exception as e:
-                log(f"Could not validate cookies: {e}, creating fresh session")
-        else:
-            log("No saved cookies found, creating fresh session")
-        
-        browser_session['context'] = browser_session['browser'].new_context(**context_options)
-        browser_session['page'] = browser_session['context'].new_page()
-        
-        # Test proxy connection in browser if configured
-        if proxy_info:
-            if test_browser_proxy(browser_session['page'], proxy_info):
-                log("Browser proxy verification successful")
-            else:
-                log("Browser proxy verification failed, but continuing...")
-        
-        # Check if we need to login
-        if check_and_perform_login():
-            browser_session['logged_in'] = True
-            browser_session['last_activity'] = datetime.now()
-            log("Browser session created and logged in successfully")
-            
-            # Double-check page is not None
-            if browser_session['page'] is None:
-                raise Exception("Page is None after login")
-            
-            return browser_session['page']
-        else:
-            raise Exception("Login failed")
-            
-    except Exception as e:
-        log(f"Error creating browser session: {e}")
-        cleanup_browser_session()
-        raise
+                log(f"[{threading.current_thread().name}] ❌ Error creating browser session: {e}")
+                cleanup_browser_session()
+                raise
+                
+        finally:
+            # Lock will be released automatically when exiting 'with' block
+            log(f"[{threading.current_thread().name}] Released session initialization lock")
 
 def check_and_perform_login():
     """Check if login is needed and perform if necessary"""
