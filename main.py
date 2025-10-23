@@ -536,8 +536,8 @@ def process_user_document(message):
     try:
         log(f"Received document from user {message.chat.id}: {message.document.file_name}")
         
-        # Check file size (Telegram limit: 20 MB for bot uploads)
-        MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB in bytes
+        # Check file size (allow up to 40 MB)
+        MAX_FILE_SIZE = 40 * 1024 * 1024  # 40 MB in bytes
         file_size = message.document.file_size
         
         if file_size > MAX_FILE_SIZE:
@@ -546,10 +546,10 @@ def process_user_document(message):
                 message, 
                 f"❌ <b>File Too Large</b>\n\n"
                 f"📁 Your file: <b>{size_mb:.2f} MB</b>\n"
-                f"📊 Maximum allowed: <b>20 MB</b>\n\n"
+                f"📊 Maximum allowed: <b>40 MB</b>\n\n"
                 f"💡 Please compress your document or split it into smaller files."
             )
-            log(f"File rejected: {file_size / (1024 * 1024):.2f} MB (exceeds 20 MB limit)")
+            log(f"File rejected: {file_size / (1024 * 1024):.2f} MB (exceeds 40 MB limit)")
             return
         
         # Download file
@@ -716,7 +716,7 @@ def approve_subscription(message):
 🎉 Your subscription is now active!
 
 📄 <b>How to submit documents:</b>
-• Upload file directly (max 20 MB)
+• Upload file directly (max 40 MB)
 • Send Google Drive link (max 100 MB)
 
 <b>Example Google Drive link:</b>
