@@ -536,34 +536,39 @@ def process_user_document(message):
     try:
         log(f"Received document from user {message.chat.id}: {message.document.file_name}")
         
-        # Check file size (allow up to 40 MB)
-        MAX_FILE_SIZE = 40 * 1024 * 1024  # 40 MB in bytes
+        # Telegram bots can only receive files up to ~20 MB directly.
+        # For larger files, instruct users to send a Google Drive link (supported up to 100 MB in this bot).
+        DIRECT_UPLOAD_LIMIT = 20 * 1024 * 1024  # 20 MB in bytes
         file_size = message.document.file_size
         
-        if file_size > MAX_FILE_SIZE:
+        if file_size > DIRECT_UPLOAD_LIMIT:
             size_mb = file_size / (1024 * 1024)
             bot.reply_to(
                 message, 
-                f"❌ <b>File Too Large</b>\n\n"
+                f"❌ <b>File Too Large for Direct Upload</b>\n\n"
                 f"📁 Your file: <b>{size_mb:.2f} MB</b>\n"
-                f"📊 Maximum allowed: <b>40 MB</b>\n\n"
-                f"💡 Please compress your document or split it into smaller files."
+                f"📥 Direct upload limit (Telegram): <b>20 MB</b>\n\n"
+                f"✅ For larger files (up to 100 MB), please send a <b>Google Drive link</b> instead."
             )
-            log(f"File rejected: {file_size / (1024 * 1024):.2f} MB (exceeds 40 MB limit)")
+            log(f"Direct upload rejected: {size_mb:.2f} MB (exceeds Telegram 20 MB limit)")
             return
         
-        # Download file
+        # Download file from Telegram
+        log("Requesting file info from Telegram API...")
         file_info = bot.get_file(message.document.file_id)
         if not file_info:
             bot.reply_to(message, "❌ Failed to get file information. Please try again.")
+            log("Failed to get file information from Telegram API")
             return
-            
+        
+        log(f"Downloading file from Telegram servers: path={getattr(file_info, 'file_path', 'N/A')}")
         downloaded_file = bot.download_file(file_info.file_path)
         if not downloaded_file:
             bot.reply_to(message, "❌ Failed to download file. Please try again.")
+            log("Failed to download file bytes from Telegram servers")
             return
         
-        # Save file
+        # Save file locally
         original_filename = message.document.file_name or "document"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         new_filename = f"{message.chat.id}_{timestamp}_{original_filename}"
@@ -575,7 +580,7 @@ def process_user_document(message):
         with open(file_path, 'wb') as f:
             f.write(downloaded_file)
         
-        log(f"Saved document to {file_path}")
+        log(f"Saved document to {file_path} ({os.path.getsize(file_path)} bytes)")
         
         # Add to processing queue
         queue_item = {
@@ -587,21 +592,21 @@ def process_user_document(message):
         }
         
         processing_queue.put(queue_item)
-        
-        # All 3 workers are running from startup, no need to scale
-        # scale_workers()
-        
         queue_position = processing_queue.qsize()
+        log(f"Queued document for user {message.chat.id}. Queue size now: {queue_position}")
         
-        # Notify user
+        # Notify user about queue status
         if queue_position == 1:
             queue_message = "📄 <b>Document queued for processing</b>\n\n🚀 Your document will be processed next."
         else:
-            estimated_wait = (queue_position - 1) * 3  # 3 minutes per document (more realistic)
-            queue_message = f"📄 <b>Document queued for processing</b>\n\n📊 Position: <b>{queue_position}</b>\n⏳ Estimated wait: <b>{estimated_wait} minutes</b>\n\n💡 You will receive updates as your document progresses."
-
+            estimated_wait = max(1, (queue_position - 1) * 3)
+            queue_message = (
+                f"📄 <b>Document queued for processing</b>\n\n"
+                f"📊 Position: <b>{queue_position}</b>\n"
+                f"⏳ Estimated wait: <b>{estimated_wait} minutes</b>"
+            )
         bot.send_message(message.chat.id, queue_message)
-        log(f"Added document '{original_filename}' to queue for user {message.chat.id}. Queue size: {queue_position}, Position: {queue_position}")
+        log(f"Notified user {message.chat.id} about queue position {queue_position}")
         
     except Exception as e:
         bot.reply_to(message, f"❌ Failed to process file: {e}")
@@ -716,7 +721,7 @@ def approve_subscription(message):
 🎉 Your subscription is now active!
 
 📄 <b>How to submit documents:</b>
-• Upload file directly (max 40 MB)
+• Upload file directly (max 20 MB via Telegram)
 • Send Google Drive link (max 100 MB)
 
 <b>Example Google Drive link:</b>
@@ -1155,11 +1160,13 @@ def handle_document(message):
     
     # Admin has unlimited access
     if user_id in ADMIN_TELEGRAM_IDS:
+        log("User is admin - bypassing subscription check")
         process_user_document(message)
         return
     
     # Check subscription
     is_subscribed, sub_type = is_user_subscribed(user_id)
+    log(f"Subscription check for user {user_id}: is_subscribed={is_subscribed}, type={sub_type}")
     
     if not is_subscribed:
         bot.reply_to(
@@ -1167,6 +1174,7 @@ def handle_document(message):
             "<b>No Active Subscription</b>\n\nPlease purchase a subscription to use this service.",
             reply_markup=create_main_menu()
         )
+        log(f"User {user_id} has no active subscription - rejected upload")
         return
     
     # Handle document-based subscription limits only (time-based has unlimited)
@@ -1180,6 +1188,7 @@ def handle_document(message):
                 "<b>No Documents Remaining</b>\n\nYour document allowance has been used up. Please purchase a new plan.",
                 reply_markup=create_main_menu()
             )
+            log(f"User {user_id} exceeded document quota")
             return
         
         # Decrease document count
@@ -1188,8 +1197,10 @@ def handle_document(message):
         
         remaining = user_data["documents_remaining"]
         bot.reply_to(message, f"📄 Processing document... ({remaining} documents remaining)")
+        log(f"User {user_id} documents_remaining updated to {remaining}")
     else:
         bot.reply_to(message, "📄 Processing your document...")
+        log(f"User {user_id} time-based subscription - proceeding to process")
     
     # Process the document
     process_user_document(message)
