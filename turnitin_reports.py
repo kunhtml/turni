@@ -523,7 +523,75 @@ def download_reports(page, chat_id, bot, original_filename=None):
                 log(f"[{worker_name}] Error clicking menu item {button_selector}: {e}")
                 return None
 
-        # Attempt AI report FIRST (user request): try text selector then fallbacks
+        # Check badges BEFORE attempting downloads to determine availability
+        log(f"[{worker_name}] Checking Similarity and AI badges...")
+        
+        # Helper function to get badge percentage
+        def get_badge_percentage(tab_index):
+            """Get badge percentage from tab button. Returns None if not found or '--'"""
+            try:
+                # Try multiple selectors for tab badges
+                selectors = [
+                    f"tii-sws-tab-navigator tii-sws-tab-button:nth-of-type({tab_index}) tdl-badge span.label",
+                    f"tii-sws-tab-navigator tii-sws-tab-button:nth-of-type({tab_index}) .badge span.label",
+                    f"tii-sws-submission-workspace tii-sws-tab-navigator tii-sws-tab-button:nth-of-type({tab_index}) tdl-badge span.label",
+                ]
+                for selector in selectors:
+                    badge_label = page.query_selector(selector)
+                    if badge_label:
+                        badge_text = badge_label.inner_text().strip()
+                        log(f"[{worker_name}] Tab {tab_index} badge text: '{badge_text}'")
+                        return badge_text
+                log(f"[{worker_name}] Tab {tab_index} badge not found")
+                return None
+            except Exception as e:
+                log(f"[{worker_name}] Error getting badge for tab {tab_index}: {e}")
+                return None
+        
+        # Check Similarity badge (Tab 1) - allow if shows any percentage (0% or higher)
+        sim_badge = get_badge_percentage(1)
+        sim_available = False
+        if sim_badge and '%' in sim_badge and '--' not in sim_badge:
+            sim_available = True
+            log(f"[{worker_name}] Similarity Report available: {sim_badge}")
+        else:
+            log(f"[{worker_name}] Similarity Report NOT available (badge: {sim_badge})")
+        
+        # Check AI badge (Tab 3) - skip if shows '--% '
+        ai_badge = get_badge_percentage(3)
+        ai_available = False
+        if ai_badge and '--' in ai_badge:
+            log(f"[{worker_name}] AI Writing Report NOT available (shows '--')")
+            ai_available = False
+            # Send unavailability message
+            bot.send_message(
+                chat_id,
+                "⚠️ <b>AI Writing Report Unavailable / Báo cáo AI không có sẵn</b>\n\n"
+                "📋 <b>Turnitin cannot generate AI report for this file.</b>\n"
+                "📋 <b>Turnitin không thể tạo báo cáo AI cho file này.</b>\n\n"
+                "❓ <b>Possible Reasons / Các lý do có thể:</b>\n\n"
+                "• 📄 <b>Unsupported file type</b> / Loại file không được hỗ trợ\n"
+                "   (Only supports: .doc, .docx, .pdf, .txt, .rtf, .odt, .html)\n"
+                "   (Chỉ hỗ trợ: .doc, .docx, .pdf, .txt, .rtf, .odt, .html)\n\n"
+                "• 🌍 <b>Unsupported language</b> / Ngôn ngữ không được hỗ trợ\n"
+                "   (Currently English only / Hiện tại chỉ hỗ trợ tiếng Anh)\n\n"
+                "• 📏 <b>Text too short</b> / Văn bản quá ngắn\n"
+                "   (Less than 300 words / Dưới 300 từ)\n\n"
+                "• 📚 <b>Text too long</b> / Văn bản quá dài\n"
+                "   (More than 30,000 words / Trên 30,000 từ)\n\n"
+                "• 🚫 <b>Content not eligible for AI analysis</b>\n"
+                "   Nội dung không đủ điều kiện để phân tích AI\n\n"
+                "✅ <b>You will still receive the Similarity Report</b>\n"
+                "✅ <b>Bạn vẫn sẽ nhận được Báo cáo Tương đồng (Similarity Report)</b>",
+                parse_mode='HTML'
+            )
+        elif ai_badge and '%' in ai_badge:
+            ai_available = True
+            log(f"[{worker_name}] AI Writing Report available: {ai_badge}")
+        else:
+            log(f"[{worker_name}] AI Writing Report status unclear (badge: {ai_badge})")
+        
+        # Attempt AI report FIRST if available (user request): try text selector then fallbacks
         download2 = None
         try:
             # Text-based item (most stable)
@@ -636,214 +704,10 @@ def download_reports(page, chat_id, bot, original_filename=None):
         download.save_as(sim_filename)
         log(f"[{worker_name}] Saved Similarity Report as {sim_filename}")
         
-        # Check AI Writing availability (more robust): detect AI indicators even if tab button isn't found
-        log(f"[{worker_name}] Checking AI Writing Report availability...")
-        ai_available = False
-        try:
-            # Helper: check for strong AI indicators on the current page
-            def _has_ai_indicators():
-                indicators = [
-                    "p.description:has-text('The percentage indicates the combined amount of likely AI-generated text')",
-                    "h3.subheading:has-text('Submission Breakdown')",
-                    "h2.heading:has-text('detected as AI')",
-                ]
-                for sel in indicators:
-                    try:
-                        el = page.query_selector(sel)
-                        if el:
-                            log(f"[{worker_name}] AI indicator present: {sel}")
-                            return True
-                    except Exception:
-                        continue
-                return False
-
-            # 1) First try: detect indicators without switching tabs (handles cases where AI is already visible)
-            if _has_ai_indicators():
-                ai_available = True
-            else:
-                # 2) Try clicking the AI tab using multiple selector strategies
-                tab_selectors = [
-                    "xpath=//tii-sws-submission-workspace//tii-sws-tab-navigator//tii-sws-tab-button[3]",
-                    "text=AI Writing",
-                    "aria/AI Writing",
-                    "tii-sws-tab-navigator tii-sws-tab-button:has-text('AI')",
-                ]
-                ai_tab = None
-                for sel in tab_selectors:
-                    try:
-                        ai_tab = page.query_selector(sel)
-                        if ai_tab:
-                            log(f"[{worker_name}] Found AI tab via selector: {sel}")
-                            break
-                    except Exception:
-                        continue
-
-                if ai_tab:
-                    try:
-                        log(f"[{worker_name}] Clicking AI Writing tab…")
-                        ai_tab.click()
-                        page.wait_for_timeout(3000)
-                    except Exception as click_err:
-                        log(f"[{worker_name}] AI tab click failed: {click_err}")
-
-                    # Re-check indicators after attempting to open the tab
-                    if _has_ai_indicators():
-                        ai_available = True
-                else:
-                    log(f"[{worker_name}] AI tab not found; will rely on content-based indicators")
-                    # Final content check before deciding unavailable
-                    ai_available = _has_ai_indicators()
-
-            # 3) If still not available, verify explicit unavailability banner before notifying user
-            if not ai_available:
-                try:
-                    unavailable_section = page.query_selector("section.header-section.header-section-v2 h2.empty-heading")
-                    if unavailable_section:
-                        heading_text = (unavailable_section.inner_text() or "").strip()
-                        if "unavailable" in heading_text.lower():
-                            log(f"[{worker_name}] AI Writing Report explicitly marked unavailable by UI")
-                            # Send detailed bilingual message to user about AI report unavailability
-                            unavailability_message = (
-                                "⚠️ <b>AI Writing Report Unavailable / Báo cáo AI không có sẵn</b>\n\n"
-                                "📋 <b>Turnitin cannot generate AI report for this file.</b>\n"
-                                "📋 <b>Turnitin không thể tạo báo cáo AI cho file này.</b>\n\n"
-                                "❓ <b>Possible Reasons / Các lý do có thể:</b>\n\n"
-                                "• 📄 <b>Unsupported file type</b> / Loại file không được hỗ trợ\n"
-                                "   (Only supports: .doc, .docx, .pdf, .txt, .rtf, .odt, .html)\n"
-                                "   (Chỉ hỗ trợ: .doc, .docx, .pdf, .txt, .rtf, .odt, .html)\n\n"
-                                "• 🌍 <b>Unsupported language</b> / Ngôn ngữ không được hỗ trợ\n"
-                                "   (Currently English only / Hiện tại chỉ hỗ trợ tiếng Anh)\n\n"
-                                "• 📏 <b>Text too short</b> / Văn bản quá ngắn\n"
-                                "   (Less than 300 words / Dưới 300 từ)\n\n"
-                                "• 📚 <b>Text too long</b> / Văn bản quá dài\n"
-                                "   (More than 30,000 words / Trên 30,000 từ)\n\n"
-                                "• 🚫 <b>Content not eligible for AI analysis</b>\n"
-                                "   Nội dung không đủ điều kiện để phân tích AI\n\n"
-                                "✅ <b>You will still receive the Similarity Report</b>\n"
-                                "✅ <b>Bạn vẫn sẽ nhận được Báo cáo Tương đồng (Similarity Report)</b>"
-                            )
-                            bot.send_message(chat_id, unavailability_message, parse_mode='HTML')
-                        else:
-                            log(f"[{worker_name}] Unrecognized empty-heading text: {heading_text}")
-                except Exception as unavail_err:
-                    log(f"[{worker_name}] Error checking explicit unavailability banner: {unavail_err}")
-        except Exception as e:
-            log(f"[{worker_name}] Error checking AI availability: {e}")
-            ai_available = False
-        
-        if not ai_available:
-            log(f"[{worker_name}] Skipping AI Writing Report download")
-            # Reports downloaded - Similarity: True, AI: False
-            log(f"[{worker_name}] Reports downloaded - Similarity: True, AI: False")
-            
-            # Sending reports to user...
-            bot.send_message(chat_id, "📤 Sending reports...")
-            send_document_with_retry(bot, chat_id, sim_filename, "📊 Similarity Report")
-            
-            # Clean up similarity report after sending
-            try:
-                if os.path.exists(sim_filename):
-                    os.remove(sim_filename)
-                    log(f"[{worker_name}] Deleted {sim_filename}")
-            except Exception as e:
-                log(f"[{worker_name}] Cleanup error: {e}")
-            
-            # Return submission info for AI unavailable case
-            submission_info = {
-                'submission_title': None,
-                'similarity_score': None,
-                'ai_score': None,
-                'submission_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                'reports_available': True,
-                'ai_available': False
-            }
-            return submission_info
-        
-        # Downloading AI Writing Report...
-        log(f"[{worker_name}] Downloading AI Writing Report...")
-
-        # Method 1: Try the new xpath-based approach with popover
-        download2 = None
-        try:
-            # Click download button to open popover menu
-            download_btn_xpath = "//tii-sws-header//tii-sws-download-btn-mfe//tdl-popover"
-            download_btn = page.query_selector(f"xpath={download_btn_xpath}")
-            if not download_btn:
-                # Fallback selectors for download button
-                download_btn = page.query_selector("tii-sws-header tii-sws-download-btn-mfe") or \
-                              page.query_selector("tii-sws-download-btn-mfe") or \
-                              page.query_selector("button[aria-label*='Download' i]")
-            
-            if download_btn:
-                log(f"[{worker_name}] Opening download menu for AI report...")
-                download_btn.click()
-                page.wait_for_timeout(1000)
-                
-                # Click on "AI Writing Report" span in the menu
-                ai_report_item = page.query_selector("span:has-text('AI Writing Report')") or \
-                                page.query_selector("button:has-text('AI Writing Report')")
-                if ai_report_item:
-                    with page.expect_download(timeout=90000) as di2:
-                        log(f"[{worker_name}] Clicking 'AI Writing Report' menu item...")
-                        # Click the parent button if we found a span
-                        if ai_report_item.evaluate("el => el.tagName") == "SPAN":
-                            parent_btn = ai_report_item.evaluate_handle("el => el.closest('button')")
-                            if parent_btn:
-                                parent_btn.as_element().click()
-                            else:
-                                ai_report_item.click()
-                        else:
-                            ai_report_item.click()
-                    download2 = di2.value
-        except Exception as e:
-            log(f"[{worker_name}] Method 1 (xpath popover) failed: {e}")
-
-        # Method 2: Use explicit AI menu item (li[2]) per previous markup
-        if not download2:
-            download2 = menu_click_download(
-                page,
-                "ul.download-menu li:nth-child(2) button",
-                timeout_ms=90000,
-                description="ai",
-            )
-        if not download2:
-            # Fallback by data-px attribute
-            download2 = menu_click_download(
-                page,
-                "ul.download-menu button[data-px='AIWritingReportDownload']",
-                timeout_ms=90000,
-                description="ai",
-            )
-        if not download2:
-            # Fallbacks by visible text or generic anchors
-            download2 = menu_click_download(
-                page,
-                "ul.download-menu button:has-text('AI Writing Report')",
-                timeout_ms=90000,
-                description="ai",
-            )
-        if not download2:
-            try:
-                links = page.query_selector_all("a[href*='download'], a[title*='Download' i]")
-                if links and len(links) >= 2:
-                    with page.expect_download(timeout=90000) as di2:
-                        log(f"[{worker_name}] Falling back to second download link on page for AI report")
-                        links[1].click()
-                    download2 = di2.value
-            except Exception:
-                pass
-        if not download2:
-            raise TimeoutError("Could not trigger AI Writing report download via known selectors")
-        
-        # Save AI report
-        ai_filename = f"downloads/ai_{chat_id}_{timestamp}.pdf"
-        download2.save_as(ai_filename)
-        log(f"[{worker_name}] Saved AI Writing Report as {ai_filename}")
-        
-        # Reports downloaded - Similarity: True, AI: True
-        log(f"[{worker_name}] Reports downloaded - Similarity: True, AI: True")
-        
-        # Sending reports to user...
+        # Summarize what we managed to download and proceed to send
+        reports_sim = bool(sim_filename and os.path.exists(sim_filename))
+        reports_ai = bool(ai_filename and os.path.exists(ai_filename))
+        log(f"[{worker_name}] Reports downloaded - Similarity: {reports_sim}, AI: {reports_ai}")
         bot.send_message(chat_id, "📤 Sending reports...")
         
     except Exception as e:
