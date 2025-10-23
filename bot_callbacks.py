@@ -545,6 +545,48 @@ def show_bot_stats(call, bot, create_admin_menu):
             reply_markup=markup
         )
 
+def show_edit_subscription_menu(call, bot, create_admin_menu):
+    """Show edit subscription instructions to admin"""
+    edit_text = """✏️ <b>Edit Subscription</b>
+
+Để chỉnh sửa subscription cho người dùng, sử dụng các lệnh sau:
+
+<b>1. Thêm số ngày sử dụng:</b>
+<code>/active [user_id] [số_ngày]</code>
+Ví dụ: <code>/active 123456789 30</code>
+→ Thêm 30 ngày cho user
+
+<b>2. Dừng subscription:</b>
+<code>/stop [user_id]</code>
+Ví dụ: <code>/stop 123456789</code>
+→ Hủy subscription của user
+
+<b>3. Kiểm tra thông tin user:</b>
+<code>/check [user_id]</code>
+Ví dụ: <code>/check 123456789</code>
+→ Xem chi tiết subscription
+
+<b>4. Xóa cooldown:</b>
+<code>/clearcooldown [user_id]</code>
+Ví dụ: <code>/clearcooldown 123456789</code>
+→ Cho phép user gửi file ngay lập tức
+
+<b>5. Xem lịch sử:</b>
+<code>/viewhistory [user_id]</code>
+Ví dụ: <code>/viewhistory 123456789</code>
+→ Xem lịch sử submit của user"""
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="back_to_admin"))
+    
+    bot.edit_message_text(
+        edit_text,
+        call.message.chat.id,
+        call.message.message_id,
+        reply_markup=markup,
+        parse_mode='HTML'
+    )
+
 def show_user_history(call, bot, get_user_submission_history, create_main_menu):
     """Show user's submission history"""
     user_id = call.from_user.id
