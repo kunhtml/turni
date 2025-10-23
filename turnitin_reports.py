@@ -212,85 +212,109 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                                             cell_contents.append(f"[{cell_idx}]={content}")
                                 log(f"[{worker_name}] Row {row_idx} cells: {' | '.join(cell_contents)}")
                             
-                            # Find the PAPER ID - it's in column 10 (PAPER ID column)
+                            # Extract TITLE text from the title cell (preferred) or checkbox title attribute
+                            def _normalize(txt: str) -> str:
+                                try:
+                                    return " ".join((txt or "").strip().split())
+                                except Exception:
+                                    return txt or ""
+
+                            title_text = ""
+                            # Preferred: anchor text inside TITLE column
+                            title_cell = row.query_selector("td[class*='ibox_title']") or (cells[2] if len(cells) > 2 else None)
+                            if title_cell:
+                                title_link_el = title_cell.query_selector("a")
+                                if title_link_el:
+                                    title_text = title_link_el.inner_text().strip()
+                                else:
+                                    title_text = title_cell.inner_text().strip()
+
+                            # Fallback: checkbox input carries paper title in its title attribute
+                            if not title_text:
+                                try:
+                                    cb = row.query_selector("td.ibox_checkbox input[name='object_checkbox']")
+                                    if cb:
+                                        tattr = cb.get_attribute("title")
+                                        if tattr:
+                                            title_text = tattr.strip()
+                                except Exception:
+                                    pass
+
+                            # Extract PAPER ID for logging/diagnostics (column 10)
                             paper_id_text = ""
                             if len(cells) > 10:
-                                # Column 10 is PAPER ID
-                                paper_id_cell = cells[10]
-                                cell_link = paper_id_cell.query_selector("a")
-                                if cell_link:
-                                    paper_id_text = cell_link.inner_text().strip()
-                                else:
-                                    paper_id_text = paper_id_cell.inner_text().strip()
-                            
-                            # Fallback: try ibox_title class if column 10 didn't work
-                            if not paper_id_text:
-                                title_cell = row.query_selector("td[class*='ibox_title']")
-                                if title_cell:
-                                    cell_link = title_cell.query_selector("a")
-                                    if cell_link:
-                                        paper_id_text = cell_link.inner_text().strip()
-                                    else:
-                                        paper_id_text = title_cell.inner_text().strip()
-                            
-                            # Exact match instead of prefix match
-                            if paper_id_text == submission_title:
-                                log(f"[{worker_name}] Found exact match: {title_text}")
-                                
-                                # Click on this submission - need to click twice with page loads
                                 try:
-                                    link = row.query_selector("a")
-                                    if link:
-                                        # First click
-                                        log(f"[{worker_name}] Clicking submission link (click 1/2)...")
-                                        link.click()
-                                        log(f"[{worker_name}] First click completed, waiting for page to load...")
-                                        
-                                        # Wait for page to load after first click
+                                    paper_id_cell = cells[10]
+                                    pid_link = paper_id_cell.query_selector("a")
+                                    paper_id_text = (pid_link.inner_text().strip() if pid_link else paper_id_cell.inner_text().strip())
+                                except Exception:
+                                    paper_id_text = ""
+
+                            # Exact match on TITLE
+                            if _normalize(title_text).lower() == _normalize(submission_title).lower():
+                                log(f"[{worker_name}] Found exact match: TITLE='{title_text}' | PAPER ID='{paper_id_text}' (row {row_idx})")
+
+                                # Prefer clicking the TITLE link and handle popup/new window
+                                try:
+                                    title_link = row.query_selector("td[class*='ibox_title'] a") or row.query_selector("a")
+                                    if title_link:
+                                        # Try to capture popup window
                                         try:
-                                            page.wait_for_load_state('domcontentloaded', timeout=30000)
-                                            page.wait_for_load_state('networkidle', timeout=30000)
-                                            log(f"[{worker_name}] Page loaded after first click")
-                                        except Exception as load_err:
-                                            log(f"[{worker_name}] Load state wait after first click: {load_err}")
-                                        
-                                        # Extra wait for rendering
-                                        time.sleep(2)
-                                        random_wait(1, 2)
-                                        
-                                        # Find the link again (DOM may have changed)
-                                        link = row.query_selector("a")
-                                        if link:
-                                            # Second click
-                                            log(f"[{worker_name}] Clicking submission link (click 2/2)...")
-                                            link.click()
-                                            log(f"[{worker_name}] Second click completed, waiting for page to load...")
-                                            
-                                            # Wait for reports page to fully load after second click
+                                            with page.expect_popup(timeout=5000) as popup_info:
+                                                log(f"[{worker_name}] Clicking title link and expecting popup...")
+                                                title_link.click()
+                                            new_page = popup_info.value
+                                            # Wait for the new page to load fully
                                             try:
-                                                page.wait_for_load_state('domcontentloaded', timeout=30000)
-                                                log(f"[{worker_name}] DOM content loaded after second click")
-                                            except:
-                                                log(f"[{worker_name}] DOM wait timeout after second click")
-                                            
+                                                new_page.wait_for_load_state('domcontentloaded', timeout=30000)
+                                            except Exception:
+                                                pass
                                             try:
-                                                page.wait_for_load_state('networkidle', timeout=30000)
-                                                log(f"[{worker_name}] Network idle after second click")
-                                            except:
-                                                log(f"[{worker_name}] Network idle timeout after second click")
-                                            
-                                            # Extra buffer to ensure page is fully rendered
+                                                new_page.wait_for_load_state('networkidle', timeout=30000)
+                                            except Exception:
+                                                pass
                                             time.sleep(2)
                                             random_wait(1, 2)
-                                            
-                                            log(f"[{worker_name}] Submission page fully loaded after double click, returning page object")
-                                            
-                                            # Return the page object so caller can use it
-                                            return page
-                                        else:
-                                            log(f"[{worker_name}] Error: Link element not found after first click")
+                                            log(f"[{worker_name}] Opened submission in new window/tab successfully")
+                                            return new_page
+                                        except Exception as popup_err:
+                                            # Fallback: double-click pattern on same page
+                                            log(f"[{worker_name}] No popup captured ({popup_err}); falling back to double-click on same page")
+                                            log(f"[{worker_name}] Clicking submission link (click 1/2)...")
+                                            title_link.click()
+                                            try:
+                                                page.wait_for_load_state('domcontentloaded', timeout=30000)
+                                                page.wait_for_load_state('networkidle', timeout=30000)
+                                            except Exception:
+                                                pass
+                                            time.sleep(2)
+                                            random_wait(1, 2)
+
+                                            # Re-find title link by text to avoid stale handles
+                                            try:
+                                                safe_sel = f"td[class*='ibox_title'] a:has-text('{submission_title}')"
+                                                title_link2 = page.query_selector(safe_sel) or row.query_selector("td[class*='ibox_title'] a") or row.query_selector("a")
+                                            except Exception:
+                                                title_link2 = None
+                                            if title_link2:
+                                                log(f"[{worker_name}] Clicking submission link (click 2/2)...")
+                                                title_link2.click()
+                                                try:
+                                                    page.wait_for_load_state('domcontentloaded', timeout=30000)
+                                                except Exception:
+                                                    pass
+                                                try:
+                                                    page.wait_for_load_state('networkidle', timeout=30000)
+                                                except Exception:
+                                                    pass
+                                                time.sleep(2)
+                                                random_wait(1, 2)
+                                                log(f"[{worker_name}] Submission page fully loaded after double click, returning page object")
+                                                return page
+                                            else:
+                                                log(f"[{worker_name}] Error: Title link not found for second click")
                                 except Exception as click_error:
-                                    log(f"[{worker_name}] Error during double click: {click_error}")
+                                    log(f"[{worker_name}] Error clicking title link: {click_error}")
                     except Exception as cell_error:
                         pass
                         

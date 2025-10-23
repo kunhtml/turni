@@ -44,6 +44,9 @@ def register_callback_handlers(bot, ADMIN_TELEGRAM_ID, MONTHLY_PLANS, DOCUMENT_P
         elif call.data == "my_history":
             show_user_history(call, bot, get_user_subscription_history, create_main_menu)
         
+        elif call.data == "check_id":
+            show_user_id(call, bot, create_main_menu)
+        
         elif call.data == "help":
             help_text = """ℹ️ <b>How to use this bot:</b>
 
@@ -90,6 +93,30 @@ def register_callback_handlers(bot, ADMIN_TELEGRAM_ID, MONTHLY_PLANS, DOCUMENT_P
             plan_id = call.data.replace("request_document_", "")
             handle_document_request(call, plan_id, bot, ADMIN_TELEGRAM_ID, DOCUMENT_PLANS, BANK_DETAILS,
                                   load_pending_requests, save_pending_requests)
+
+def show_user_id(call, bot, create_main_menu):
+    """Show user their Telegram ID"""
+    user_id = call.from_user.id
+    username = call.from_user.username or "N/A"
+    first_name = call.from_user.first_name or "N/A"
+    
+    id_text = f"""<b>Your Account Information</b>
+
+<b>Telegram ID:</b> <code>{user_id}</code>
+<b>Username:</b> @{username}
+<b>Name:</b> {first_name}
+
+💡 Share this ID with admins for account management."""
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="back_to_main"))
+    
+    bot.edit_message_text(
+        id_text,
+        call.message.chat.id,
+        call.message.message_id,
+        reply_markup=markup
+    )
 
 def show_user_subscription(call, bot, is_user_subscribed, get_user_subscription_info, create_main_menu):
     """Show user's current subscription details"""
