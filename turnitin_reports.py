@@ -585,7 +585,7 @@ def download_reports(page, chat_id, bot, original_filename=None):
                 "✅ <b>Bạn vẫn sẽ nhận được Báo cáo Tương đồng (Similarity Report)</b>",
                 parse_mode='HTML'
             )
-        elif ai_badge and '%' in ai_badge:
+        elif ai_badge and ('%' in ai_badge or '*%' in ai_badge):
             ai_available = True
             log(f"[{worker_name}] AI Writing Report available: {ai_badge}")
         else:
