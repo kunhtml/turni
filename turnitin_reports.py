@@ -59,11 +59,26 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
         # Purpose: Load and populate table data, and sort TWICE to show NEWEST submission at TOP (row 0)
         # The table needs to be clicked twice to reverse sort order and put latest submission first
         log(f"[{worker_name}] Triggering table sort/refresh (2 clicks)...")
+        
+        # DEBUG: Print all headers to see what columns exist
+        try:
+            all_headers = page.query_selector_all('tr.inbox_header th')
+            if all_headers:
+                header_texts = []
+                for idx, header in enumerate(all_headers):
+                    header_text = header.inner_text().strip()
+                    header_texts.append(f"[{idx}]={header_text}")
+                log(f"[{worker_name}] Table headers: {' | '.join(header_texts)}")
+        except Exception as header_debug_err:
+            log(f"[{worker_name}] Could not read headers: {header_debug_err}")
+        
         try:
             # Try clicking on the sorted column header to trigger sort and load data
             sort_selectors = [
                 '#assign_inbox > div.ibox_body_wrapper.yui-skin-sam > table > tbody > tr.inbox_header > th.sorted_b',  # Exact selector
                 'th.sorted_b',                   # Sorted column header
+                'tr.inbox_header th a',          # Header link inside th
+                'tr.inbox_header th:nth-child(3) a',  # Paper ID column (usually 3rd)
                 'tr.inbox_header th',            # Any inbox header
                 'th a',                          # Header link
                 'a[href*="t_inbox.asp"]',        # Inbox navigation link
