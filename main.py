@@ -631,15 +631,20 @@ def process_user_document(message):
         queue_position = processing_queue.qsize()
         log(f"Queued document for user {message.chat.id}. Queue size now: {queue_position}")
         
-        # Notify user about queue status
+        # Notify user about queue status (SINGLE WORKER MODE - Sequential Processing)
         if queue_position == 1:
-            queue_message = "📄 <b>Document queued for processing</b>\n\n🚀 Your document will be processed next."
+            queue_message = (
+                "📄 <b>Document queued for processing</b>\n\n"
+                "🚀 Your document will be processed next.\n"
+                "⏳ Processing will complete from start to finish before any other document."
+            )
         else:
             estimated_wait = max(1, (queue_position - 1) * 3)
             queue_message = (
                 f"📄 <b>Document queued for processing</b>\n\n"
-                f"📊 Position: <b>{queue_position}</b>\n"
-                f"⏳ Estimated wait: <b>{estimated_wait} minutes</b>"
+                f"📊 Position in queue: <b>{queue_position}</b>\n"
+                f"⏳ Estimated wait: <b>~{estimated_wait} minutes</b>\n\n"
+                f"ℹ️ Each document is processed completely (submit + download reports) before the next one starts."
             )
         bot.send_message(message.chat.id, queue_message)
         log(f"Notified user {message.chat.id} about queue position {queue_position}")
