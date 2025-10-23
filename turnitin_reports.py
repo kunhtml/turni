@@ -109,22 +109,60 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                             if title_text == submission_title:
                                 log(f"[{worker_name}] Found exact match: {title_text}")
                                 
-                                # Click on this submission
+                                # Click on this submission - need to click twice with page loads
                                 try:
                                     link = row.query_selector("a")
                                     if link:
+                                        # First click
+                                        log(f"[{worker_name}] Clicking submission link (click 1/2)...")
                                         link.click()
-                                        log(f"[{worker_name}] Clicked submission link")
-                                        time.sleep(3)
+                                        log(f"[{worker_name}] First click completed, waiting for page to load...")
                                         
-                                        # Wait for reports page to load
-                                        page.wait_for_load_state("networkidle", timeout=30000)
-                                        log(f"[{worker_name}] Submission page loaded, returning page object")
+                                        # Wait for page to load after first click
+                                        try:
+                                            page.wait_for_load_state('domcontentloaded', timeout=30000)
+                                            page.wait_for_load_state('networkidle', timeout=30000)
+                                            log(f"[{worker_name}] Page loaded after first click")
+                                        except Exception as load_err:
+                                            log(f"[{worker_name}] Load state wait after first click: {load_err}")
                                         
-                                        # Return the page object so caller can use it
-                                        return page
+                                        # Extra wait for rendering
+                                        time.sleep(2)
+                                        random_wait(1, 2)
+                                        
+                                        # Find the link again (DOM may have changed)
+                                        link = row.query_selector("a")
+                                        if link:
+                                            # Second click
+                                            log(f"[{worker_name}] Clicking submission link (click 2/2)...")
+                                            link.click()
+                                            log(f"[{worker_name}] Second click completed, waiting for page to load...")
+                                            
+                                            # Wait for reports page to fully load after second click
+                                            try:
+                                                page.wait_for_load_state('domcontentloaded', timeout=30000)
+                                                log(f"[{worker_name}] DOM content loaded after second click")
+                                            except:
+                                                log(f"[{worker_name}] DOM wait timeout after second click")
+                                            
+                                            try:
+                                                page.wait_for_load_state('networkidle', timeout=30000)
+                                                log(f"[{worker_name}] Network idle after second click")
+                                            except:
+                                                log(f"[{worker_name}] Network idle timeout after second click")
+                                            
+                                            # Extra buffer to ensure page is fully rendered
+                                            time.sleep(2)
+                                            random_wait(1, 2)
+                                            
+                                            log(f"[{worker_name}] Submission page fully loaded after double click, returning page object")
+                                            
+                                            # Return the page object so caller can use it
+                                            return page
+                                        else:
+                                            log(f"[{worker_name}] Error: Link element not found after first click")
                                 except Exception as click_error:
-                                    log(f"[{worker_name}] Error clicking submission: {click_error}")
+                                    log(f"[{worker_name}] Error during double click: {click_error}")
                     except Exception as cell_error:
                         pass
                         
