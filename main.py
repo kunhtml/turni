@@ -1435,9 +1435,9 @@ def handle_google_drive_link(message):
     else:
         remaining_msg = ""
     
-    # Set cooldown for this user (10 minutes)
+    # Set cooldown for this user (8 minutes)
     set_user_cooldown(user_id)
-    log(f"Set 10-minute cooldown for user {user_id}")
+    log(f"Set 8-minute cooldown for user {user_id}")
     
     # Process the Google Drive link
     process_google_drive_link(message, message.text.strip())
@@ -1499,9 +1499,9 @@ def handle_document(message):
     else:
         log(f"User {user_id} time-based subscription - proceeding to process")
     
-    # Set cooldown for this user (10 minutes)
+    # Set cooldown for this user (8 minutes)
     set_user_cooldown(user_id)
-    log(f"Set 10-minute cooldown for user {user_id}")
+    log(f"Set 8-minute cooldown for user {user_id}")
     
     # Process the document
     process_user_document(message)
