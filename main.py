@@ -104,6 +104,21 @@ def save_pending_requests(data):
     with open("pending_requests.json", "w") as f:
         json.dump(data, f, indent=2)
 
+def load_keys():
+    """Load redeemable keys from file (keys.json)"""
+    try:
+        if os.path.exists("keys.json"):
+            with open("keys.json", "r") as f:
+                return json.load(f)
+        return {}
+    except:
+        return {}
+
+def save_keys(data):
+    """Save redeemable keys to file (keys.json)"""
+    with open("keys.json", "w") as f:
+        json.dump(data, f, indent=2)
+
 def load_submission_history():
     """Load submission history from file"""
     try:
@@ -783,6 +798,57 @@ https://drive.google.com/file/d/YOUR_FILE_ID/view
     bot.send_message(request_data["user_id"], user_message)
     bot.reply_to(message, f"✅ Subscription approved for user {request_data['user_id']}")
 
+@bot.message_handler(commands=['add'])
+def add_key_command(message):
+    """Admin command to create/update a redeemable key: /add <key> <uses>"""
+    if message.from_user.id not in ADMIN_TELEGRAM_IDS:
+        return
+    
+    try:
+        parts = message.text.split()
+        _, key, uses_str = parts[0], parts[1], parts[2]
+    except Exception:
+        bot.reply_to(message, (
+            "❌ Usage: /add <key> <số_lượt>\n\n"
+            "Ví dụ: /add VIPOCT 2\n"
+            "→ Tạo key VIPOCT cho 2 lượt sử dụng"
+        ))
+        return
+    
+    if not key or ' ' in key:
+        bot.reply_to(message, "❌ Key không hợp lệ (không chứa khoảng trắng)")
+        return
+    
+    try:
+        uses = int(uses_str)
+        if uses <= 0:
+            raise ValueError()
+    except ValueError:
+        bot.reply_to(message, "❌ Số lượt phải là số nguyên dương")
+        return
+    
+    keys = load_keys()
+    now = datetime.now().isoformat()
+    
+    # Behavior: upsert if key not redeemed; block if already redeemed
+    if key in keys and keys[key].get('redeemed'):
+        bot.reply_to(message, f"❌ Key '{key}' đã được sử dụng, không thể cập nhật")
+        return
+    
+    existed = key in keys
+    keys[key] = {
+        'uses': uses,
+        'redeemed': False,
+        'created_at': keys.get(key, {}).get('created_at', now) if existed else now,
+        'created_by': keys.get(key, {}).get('created_by', message.from_user.id) if existed else message.from_user.id
+    }
+    save_keys(keys)
+    
+    if existed:
+        bot.reply_to(message, f"✅ Đã cập nhật key <b>{key}</b> → <b>{uses}</b> lượt", parse_mode='HTML')
+    else:
+        bot.reply_to(message, f"✅ Đã tạo key <b>{key}</b> với <b>{uses}</b> lượt", parse_mode='HTML')
+
 @bot.message_handler(commands=['edit_subscription'])
 def edit_subscription_command(message):
     """Admin command to edit subscription end date"""
@@ -855,6 +921,83 @@ def view_history_command(message):
     history_text += f"<b>Total:</b> {len(history)} submissions"
     
     bot.send_message(message.chat.id, history_text)
+
+@bot.message_handler(commands=['key'])
+def redeem_key_command(message):
+    """User command to redeem a key: /key <key>
+    Grants N document uses to the user's document-based subscription.
+    """
+    user_id = message.from_user.id
+    try:
+        parts = message.text.split()
+        if len(parts) < 2:
+            raise ValueError()
+        key = parts[1].strip()
+    except Exception:
+        bot.reply_to(message, (
+            "❌ Cách dùng: /key <key>\n\n"
+            "Ví dụ: /key VIPOCT\n"
+            "→ Nhận số lượt sử dụng tương ứng với key"
+        ))
+        return
+    
+    keys = load_keys()
+    if key not in keys:
+        bot.reply_to(message, "❌ Key không tồn tại hoặc sai key")
+        return
+    
+    key_info = keys[key]
+    if key_info.get('redeemed'):
+        bot.reply_to(message, "❌ Key đã được sử dụng")
+        return
+    
+    uses = int(key_info.get('uses', 0))
+    if uses <= 0:
+        bot.reply_to(message, "❌ Key không hợp lệ (số lượt = 0)")
+        return
+    
+    # Mark key as redeemed
+    key_info['redeemed'] = True
+    key_info['redeemed_by'] = user_id
+    key_info['redeemed_at'] = datetime.now().isoformat()
+    save_keys(keys)
+    
+    # Grant document uses to user's subscription (document-based)
+    subs = load_subscriptions()
+    uid = str(user_id)
+    now = datetime.now().isoformat()
+    
+    if uid not in subs:
+        subs[uid] = {
+            'type': 'document',
+            'plan_name': 'Key Redeem',
+            'documents_total': uses,
+            'documents_remaining': uses,
+            'start_date': now,
+        }
+    else:
+        # If user already has document-based, add uses; otherwise create/augment doc counters
+        user_sub = subs[uid]
+        if user_sub.get('type') == 'document' or 'documents_remaining' in user_sub:
+            user_sub['documents_total'] = int(user_sub.get('documents_total', 0)) + uses
+            user_sub['documents_remaining'] = int(user_sub.get('documents_remaining', 0)) + uses
+            user_sub['plan_name'] = user_sub.get('plan_name', 'Key Redeem')
+        else:
+            # User might have time/monthly; add document counters so is_user_subscribed can switch if time expires
+            user_sub['documents_total'] = int(user_sub.get('documents_total', 0)) + uses
+            user_sub['documents_remaining'] = int(user_sub.get('documents_remaining', 0)) + uses
+            # Keep their original type; doc counters will be used when needed
+    
+    save_subscriptions(subs)
+    
+    # Confirm to user
+    remaining = subs[str(user_id)].get('documents_remaining', uses)
+    bot.reply_to(message, (
+        "✅ <b>Key redeemed successfully!</b>\n\n"
+        f"🎟️ Key: <code>{key}</code> → +<b>{uses}</b> lượt\n"
+        f"📊 Lượt còn lại: <b>{remaining}</b>\n\n"
+        "📤 Gửi tài liệu để bắt đầu xử lý."
+    ), parse_mode='HTML')
 
 @bot.message_handler(commands=['id'])
 def id_command(message):
