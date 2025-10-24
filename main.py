@@ -396,6 +396,12 @@ def create_main_menu():
     
     return markup
 
+def create_persistent_menu_keyboard():
+    """Create a persistent reply keyboard with a Menu button"""
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
+    kb.add(types.KeyboardButton("📋 Menu"))
+    return kb
+
 def create_monthly_plans_menu():
     """Create monthly plans menu"""
     markup = types.InlineKeyboardMarkup(row_width=2)
@@ -775,6 +781,15 @@ def send_welcome(message):
             welcome_text,
             reply_markup=create_main_menu()
         )
+        # Also present a persistent Menu button so users don't need to type /start
+        try:
+            bot.send_message(
+                user_id,
+                "🔘 Use the button below to open the menu anytime\n🔘 Bấm nút bên dưới để mở menu bất cứ lúc nào",
+                reply_markup=create_persistent_menu_keyboard()
+            )
+        except:
+            pass
 
 @bot.message_handler(commands=['approve'])
 def approve_subscription(message):
@@ -1138,15 +1153,51 @@ def help_command(message):
 <b>2) Send documents / Gửi tài liệu</b>
 • Direct upload up to 20MB (Telegram)
     Gửi file trực tiếp tối đa 20MB
- 
+• Larger files (≤100MB): send a <b>Google Drive</b> or <b>Google Docs</b> link
+    File lớn (≤100MB): gửi link <b>Google Drive</b> hoặc <b>Google Docs</b>
+• Make sure sharing is set to <b>Anyone with the link</b>
+    Hãy bật quyền chia sẻ <b>Ai có liên kết cũng xem được</b>
+
+<b>Accepted link formats / Link hợp lệ</b>
+• Google Drive file: <code>https://drive.google.com/file/d/FILE_ID/view</code> hoặc <code>...open?id=FILE_ID</code>
+• Google Docs: <code>https://docs.google.com/document/d/DOC_ID/edit</code>
+  → We will automatically export Docs to DOCX / Hệ thống tự xuất DOCX từ Docs
 
 <b>3) Supported formats / Định dạng hỗ trợ</b>
 • PDF, DOC, DOCX, TXT, RTF, ODT, HTML
 """
 
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="back_to_main"))
+    markup.add(types.InlineKeyboardButton("📋 Open Menu", callback_data="back_to_main"))
     bot.send_message(message.chat.id, help_text, reply_markup=markup)
+
+@bot.message_handler(commands=['menu'])
+def open_menu_command(message):
+    """Open the main menu without needing /start"""
+    user_id = message.from_user.id
+    bot.send_message(
+        user_id,
+        "🤖 <b>Turnitin Report Bot</b>\n\n📋 <b>Main Menu</b>",
+        reply_markup=create_main_menu()
+    )
+    # Ensure the persistent Menu button is available
+    try:
+        bot.send_message(
+            user_id,
+            "🔘 Use the button below to open the menu anytime\n🔘 Bấm nút bên dưới để mở menu bất cứ lúc nào",
+            reply_markup=create_persistent_menu_keyboard()
+        )
+    except:
+        pass
+
+@bot.message_handler(func=lambda m: m.text and m.text.strip().lower() in ["menu", "📋 menu"]) 
+def open_menu_via_button(message):
+    """Handle persistent reply keyboard 'Menu' button"""
+    bot.send_message(
+        message.chat.id,
+        "🤖 <b>Turnitin Report Bot</b>\n\n📋 <b>Main Menu</b>",
+        reply_markup=create_main_menu()
+    )
 
 @bot.message_handler(commands=['id'])
 def id_command(message):
