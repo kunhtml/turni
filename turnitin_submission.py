@@ -498,6 +498,39 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
     # Click Confirm button with multiple selectors
     log(f"[{worker_name}] Clicking Confirm button...")
 
+    # Ensure confirm button present and, if possible, enabled
+    try:
+        page.wait_for_selector('#confirm-btn', state='attached', timeout=300000)  # up to 5 minutes for very large files
+        confirm_loc = page.locator('#confirm-btn')
+        try:
+            confirm_loc.scroll_into_view_if_needed()
+        except Exception:
+            pass
+        # Wait until not disabled
+        max_enable_wait = 180  # seconds
+        for i in range(max_enable_wait):
+            try:
+                disabled_attr = confirm_loc.get_attribute('disabled')
+                if disabled_attr is None:
+                    log(f"[{worker_name}] Confirm button appears enabled (pre-click)")
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
+        else:
+            # After waiting, still disabled; if long-processing state exists, attempt JS click as last resort
+            try:
+                if page.locator('.state-still-processing').count() > 0:
+                    log(f"[{worker_name}] Confirm still disabled after {max_enable_wait}s but long-processing visible; attempting JS click")
+                    page.evaluate("document.querySelector('#confirm-btn')?.click()")
+                    log(f"[{worker_name}] JS click on Confirm dispatched")
+                else:
+                    log(f"[{worker_name}] Confirm still disabled and no long-processing hint; will try normal selector clicks")
+            except Exception as js_err:
+                log(f"[{worker_name}] JS click attempt failed: {js_err}")
+    except Exception as wait_confirm_err:
+        log(f"[{worker_name}] Could not ensure confirm button presence before clicking: {wait_confirm_err}")
+
     confirm_selectors = [
         '#confirm-btn',                         # ID selector from HTML
         'button:has-text("Confirm")',          # Text-based selector
@@ -509,8 +542,12 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
     for selector in confirm_selectors:
         try:
             log(f"[{worker_name}] Trying Confirm button selector: {selector}")
-            page.wait_for_selector(selector, timeout=15000)
-            page.click(selector)
+            page.wait_for_selector(selector, timeout=30000)
+            # Try a regular click first, then a forced click if needed
+            try:
+                page.click(selector, timeout=30000)
+            except Exception:
+                page.click(selector, timeout=30000, force=True)
             log(f"[{worker_name}] Confirm button clicked successfully with selector: {selector}")
             confirm_clicked = True
             break
