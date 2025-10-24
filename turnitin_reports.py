@@ -254,6 +254,83 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                             if _normalize(title_text).lower() == _normalize(submission_title).lower():
                                 log(f"[{worker_name}] Found exact match: TITLE='{title_text}' | PAPER ID='{paper_id_text}' (row {row_idx})")
 
+                                # BEFORE opening viewer: check SIMILARITY column for '--' (pending)
+                                try:
+                                    similarity_text = None
+                                    # Prefer explicit similarity cell selector
+                                    sim_cell = row.query_selector("td.or_report_cell") or (cells[3] if len(cells) > 3 else None)
+                                    if sim_cell:
+                                        sim_span = sim_cell.query_selector("span.or_full_version") or sim_cell.query_selector(".or_full_version")
+                                        if sim_span:
+                                            similarity_text = (sim_span.inner_text() or "").strip()
+                                        else:
+                                            similarity_text = (sim_cell.inner_text() or "").strip()
+                                    if similarity_text is not None:
+                                        log(f"[{worker_name}] Similarity cell text: '{similarity_text}'")
+                                    # If similarity shows '--', wait 5 minutes then reload and check again
+                                    if similarity_text is not None and similarity_text.strip() == "--":
+                                        try:
+                                            bot.send_message(
+                                                chat_id,
+                                                "⏳ Similarity is not ready yet (showing --). Waiting 5 minutes then retry…\n"
+                                                "⏳ Similarity chưa sẵn sàng (hiển thị --). Chờ 5 phút rồi thử lại…"
+                                            )
+                                        except Exception:
+                                            pass
+                                        log(f"[{worker_name}] Similarity is '--' — sleeping 5 minutes before retry")
+                                        time.sleep(5 * 60)
+                                        # Reload inbox and re-check the same title row's similarity
+                                        try:
+                                            page.reload(wait_until='networkidle')
+                                        except Exception:
+                                            try:
+                                                page.wait_for_load_state('networkidle', timeout=30000)
+                                            except Exception:
+                                                pass
+                                        time.sleep(2)
+
+                                        # Re-locate the row by exact title match once
+                                        try:
+                                            table2 = page.query_selector("table[class*='inbox'], table[id*='inbox'], table[class*='submission']")
+                                            rows2 = table2.query_selector_all("tbody tr") if table2 else [r for r in page.query_selector_all("tr") if len(r.query_selector_all("th")) == 0]
+                                        except Exception:
+                                            rows2 = []
+                                        found_again = False
+                                        similarity_text2 = None
+                                        for r2 in rows2:
+                                            try:
+                                                c2 = r2.query_selector_all("td")
+                                                tcell2 = r2.query_selector("td[class*='ibox_title']") or (c2[2] if len(c2) > 2 else None)
+                                                ttext2 = ""
+                                                if tcell2:
+                                                    alink = tcell2.query_selector("a")
+                                                    ttext2 = (alink.inner_text().strip() if alink else tcell2.inner_text().strip())
+                                                if _normalize(ttext2).lower() == _normalize(submission_title).lower():
+                                                    found_again = True
+                                                    scell2 = r2.query_selector("td.or_report_cell") or (c2[3] if len(c2) > 3 else None)
+                                                    if scell2:
+                                                        sspan2 = scell2.query_selector("span.or_full_version") or scell2.query_selector(".or_full_version")
+                                                        similarity_text2 = ((sspan2.inner_text() if sspan2 else scell2.inner_text()) or "").strip()
+                                                    break
+                                            except Exception:
+                                                continue
+                                        log(f"[{worker_name}] Post-wait recheck — found_again={found_again}, similarity='{similarity_text2}'")
+                                        if found_again and (similarity_text2 is not None) and similarity_text2.strip() == "--":
+                                            # Still '--' after 5 minutes → end session and notify user
+                                            try:
+                                                bot.send_message(
+                                                    chat_id,
+                                                    "❌ This file cannot be checked on Turnitin right now (Similarity remains -- after retry).\n"
+                                                    "❌ File này không thể kiểm tra trên Turnitin lúc này (Similarity vẫn -- sau khi thử lại).\n\n"
+                                                    "📩 Vui lòng báo admin để kiểm tra lại."
+                                                )
+                                            except Exception:
+                                                pass
+                                            log(f"[{worker_name}] Similarity still '--' after 5-minute wait — aborting this submission")
+                                            return None
+                                except Exception as sim_check_err:
+                                    log(f"[{worker_name}] Similarity pre-check error: {sim_check_err}")
+
                                 # Prefer clicking the TITLE link and handle popup/new window
                                 try:
                                     title_link = row.query_selector("td[class*='ibox_title'] a") or row.query_selector("a")
