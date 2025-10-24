@@ -123,32 +123,97 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
     except Exception as e:
         log(f"[{worker_name}] Error configuring settings: {e}")
 
-    # Click Submit to proceed with multiple selectors
-    log(f"[{worker_name}] Clicking Submit to proceed...")
+    # Click Submit/Continue to proceed with multiple selectors and fallbacks
+    log(f"[{worker_name}] Clicking Submit/Continue to proceed...")
 
     proceed_selectors = [
-        'input[type="submit"][value="Submit"]',     # Exact match from HTML
-        'input[name="submit"][type="submit"]',      # Name + type selector
-        'input[class="submit"]',                    # Class-based selector
-        'input[type="submit"]',                     # Type-only fallback
-        'input[value="Submit"]'                     # Value-only fallback
+        # Common explicit submit buttons
+        'input[type="submit"][value="Submit"]',
+        'input[name="submit"][type="submit"]',
+        'input[class="submit"]',
+        'input[type="submit"]',
+        'input[value="Submit"]',
+        # Variants observed as site changes
+        'button:has-text("Submit")',
+        'button:has-text("Continue")',
+        'button:has-text("Next")',
+        'input[value="Continue"]',
+        'input[value="Next"]',
+        '#confirm',                     # Modal-style confirm id
+        'input#confirm',
+        'button#confirm',
+        '.continue.modal-button'
     ]
 
     proceed_clicked = False
     for selector in proceed_selectors:
         try:
-            log(f"[{worker_name}] Trying Submit proceed selector: {selector}")
-            page.wait_for_selector(selector, timeout=15000)
-            page.click(selector)
-            log(f"[{worker_name}] Submit proceed clicked successfully with selector: {selector}")
+            log(f"[{worker_name}] Trying proceed selector: {selector}")
+            page.wait_for_selector(selector, timeout=30000)
+            loc = page.locator(selector)
+            if loc.count() > 1:
+                log(f"[{worker_name}] {selector} resolved to {loc.count()} elements, clicking the first visible one")
+                loc = loc.first
+            # If the element is disabled, attempt to enable by checking any required checkboxes
+            try:
+                disabled_attr = loc.get_attribute('disabled')
+                if disabled_attr is not None:
+                    log(f"[{worker_name}] Proceed element appears disabled; attempting to enable prerequisites...")
+                    # Try to check any visible agreement/confirm checkboxes around
+                    for cb in [
+                        'input[type="checkbox"][name*="agree"]',
+                        'input[type="checkbox"][name*="confirm"]',
+                        'input[type="checkbox"]'
+                    ]:
+                        try:
+                            cbloc = page.locator(cb)
+                            if cbloc.count() > 0:
+                                # Click all visible unchecked checkboxes (up to 3)
+                                max_to_check = min(3, cbloc.count())
+                                for i in range(max_to_check):
+                                    elem = cbloc.nth(i)
+                                    try:
+                                        if elem.is_visible():
+                                            elem.check()
+                                					# tiny wait
+                                            time.sleep(0.2)
+                                    except Exception:
+                                        continue
+                        except Exception:
+                            pass
+                    # Re-evaluate disabled state after attempts
+                    try:
+                        disabled_attr2 = loc.get_attribute('disabled')
+                        if disabled_attr2 is not None:
+                            log(f"[{worker_name}] Proceed element still disabled; will attempt click anyway")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            loc.click()
+            log(f"[{worker_name}] Proceed clicked successfully with selector: {selector}")
             proceed_clicked = True
             break
         except Exception as selector_error:
-            log(f"[{worker_name}] Submit proceed selector {selector} failed: {selector_error}")
+            log(f"[{worker_name}] Proceed selector {selector} failed: {selector_error}")
             continue
 
+    # Heuristic fallback: try any submit/continue buttons present
     if not proceed_clicked:
-        raise Exception("Could not find Submit proceed button with any selector")
+        try:
+            generic = page.locator('input[type="submit"], button[type="submit"], button:has-text("Submit"), button:has-text("Continue")')
+            count = generic.count()
+            log(f"[{worker_name}] Fallback: found {count} generic submit/continue buttons")
+            if count > 0:
+                generic.first.click()
+                proceed_clicked = True
+                log(f"[{worker_name}] Fallback proceed click succeeded")
+        except Exception as generic_err:
+            log(f"[{worker_name}] Fallback proceed click failed: {generic_err}")
+
+    if not proceed_clicked:
+        raise Exception("Could not find Submit/Continue proceed button with any selector")
 
     random_wait(2, 3)
 
