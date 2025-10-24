@@ -369,7 +369,7 @@ def create_main_menu():
     )
     markup.add(
         types.InlineKeyboardButton("🆔 Check ID", callback_data="check_id"),
-        types.InlineKeyboardButton("❓ Help", callback_data="help")
+        types.InlineKeyboardButton("❓ Help / Trợ giúp", callback_data="help")
     )
     
     return markup
@@ -810,14 +810,14 @@ def add_key_command(message):
         _, key, uses_str = parts[0], parts[1], parts[2]
     except Exception:
         bot.reply_to(message, (
-            "❌ Usage: /add <key> <số_lượt>\n\n"
-            "Ví dụ: /add VIPOCT 2\n"
-            "→ Tạo key VIPOCT cho 2 lượt sử dụng"
+            "❌ Usage / Cách dùng: /add <key> <uses|số_lượt>\n\n"
+            "Example / Ví dụ: /add VIPOCT 2\n"
+            "→ Create key VIPOCT for 2 uses / Tạo key VIPOCT cho 2 lượt"
         ))
         return
     
     if not key or ' ' in key:
-        bot.reply_to(message, "❌ Key không hợp lệ (không chứa khoảng trắng)")
+        bot.reply_to(message, "❌ Invalid key (no spaces) / Key không hợp lệ (không chứa khoảng trắng)")
         return
     
     try:
@@ -825,7 +825,7 @@ def add_key_command(message):
         if uses <= 0:
             raise ValueError()
     except ValueError:
-        bot.reply_to(message, "❌ Số lượt phải là số nguyên dương")
+        bot.reply_to(message, "❌ Uses must be a positive integer / Số lượt phải là số nguyên dương")
         return
     
     keys = load_keys()
@@ -833,7 +833,7 @@ def add_key_command(message):
     
     # Behavior: upsert if key not redeemed; block if already redeemed
     if key in keys and keys[key].get('redeemed'):
-        bot.reply_to(message, f"❌ Key '{key}' đã được sử dụng, không thể cập nhật")
+        bot.reply_to(message, f"❌ Key '{key}' already redeemed; cannot update / đã được sử dụng, không thể cập nhật")
         return
     
     existed = key in keys
@@ -846,9 +846,9 @@ def add_key_command(message):
     save_keys(keys)
     
     if existed:
-        bot.reply_to(message, f"✅ Đã cập nhật key <b>{key}</b> → <b>{uses}</b> lượt", parse_mode='HTML')
+        bot.reply_to(message, f"✅ Updated key <b>{key}</b> → <b>{uses}</b> uses\n✅ Đã cập nhật key <b>{key}</b> → <b>{uses}</b> lượt", parse_mode='HTML')
     else:
-        bot.reply_to(message, f"✅ Đã tạo key <b>{key}</b> với <b>{uses}</b> lượt", parse_mode='HTML')
+        bot.reply_to(message, f"✅ Created key <b>{key}</b> with <b>{uses}</b> uses\n✅ Đã tạo key <b>{key}</b> với <b>{uses}</b> lượt", parse_mode='HTML')
 
 @bot.message_handler(commands=['edit_subscription'])
 def edit_subscription_command(message):
@@ -936,25 +936,25 @@ def redeem_key_command(message):
         key = parts[1].strip()
     except Exception:
         bot.reply_to(message, (
-            "❌ Cách dùng: /key <key>\n\n"
-            "Ví dụ: /key VIPOCT\n"
-            "→ Nhận số lượt sử dụng tương ứng với key"
+            "❌ Usage / Cách dùng: /key <key>\n\n"
+            "Example / Ví dụ: /key VIPOCT\n"
+            "→ Receive the number of uses provided by the key / Nhận số lượt đúng theo key"
         ))
         return
     
     keys = load_keys()
     if key not in keys:
-        bot.reply_to(message, "❌ Key không tồn tại hoặc sai key")
+        bot.reply_to(message, "❌ Key not found or invalid / Key không tồn tại hoặc sai")
         return
     
     key_info = keys[key]
     if key_info.get('redeemed'):
-        bot.reply_to(message, "❌ Key đã được sử dụng")
+        bot.reply_to(message, "❌ Key already redeemed / Key đã được sử dụng")
         return
     
     uses = int(key_info.get('uses', 0))
     if uses <= 0:
-        bot.reply_to(message, "❌ Key không hợp lệ (số lượt = 0)")
+        bot.reply_to(message, "❌ Invalid key (uses = 0) / Key không hợp lệ (số lượt = 0)")
         return
     
     # Mark key as redeemed
@@ -994,10 +994,11 @@ def redeem_key_command(message):
     # Confirm to user
     remaining = subs[str(user_id)].get('documents_remaining', uses)
     bot.reply_to(message, (
-        "✅ <b>Key redeemed successfully!</b>\n\n"
-        f"🎟️ Key: <code>{key}</code> → +<b>{uses}</b> lượt\n"
-        f"📊 Lượt còn lại: <b>{remaining}</b>\n\n"
-        "📤 Gửi tài liệu để bắt đầu xử lý."
+        "✅ <b>Key redeemed successfully!</b>\n"
+        "✅ <b>Dùng key thành công!</b>\n\n"
+        f"🎟️ Key: <code>{key}</code> → +<b>{uses}</b> uses / lượt\n"
+        f"📊 Remaining: <b>{remaining}</b> / Còn lại: <b>{remaining}</b>\n\n"
+        "📤 Send a document to start processing / Gửi tài liệu để bắt đầu xử lý."
     ), parse_mode='HTML')
 
 @bot.message_handler(commands=['id'])
