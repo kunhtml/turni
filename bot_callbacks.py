@@ -66,14 +66,22 @@ def register_callback_handlers(bot, ADMIN_TELEGRAM_ID, MONTHLY_PLANS, DOCUMENT_P
 <b>2) Send documents / Gửi tài liệu</b>
 • Direct upload up to 20MB (Telegram)
     Gửi file trực tiếp tối đa 20MB
- 
+• Larger files (≤100MB): send a <b>Google Drive</b> or <b>Google Docs</b> link
+    File lớn (≤100MB): gửi link <b>Google Drive</b> hoặc <b>Google Docs</b>
+• Make sure sharing is set to <b>Anyone with the link</b>
+    Bật chia sẻ <b>Ai có liên kết cũng xem được</b>
+
+<b>Accepted link formats / Link hợp lệ</b>
+• Google Drive file: <code>https://drive.google.com/file/d/FILE_ID/view</code> hoặc <code>...open?id=FILE_ID</code>
+• Google Docs: <code>https://docs.google.com/document/d/DOC_ID/edit</code>
+  → Auto-export to DOCX / Tự xuất DOCX
 
 <b>3) Supported formats / Định dạng hỗ trợ</b>
 • PDF, DOC, DOCX, TXT, RTF, ODT, HTML
 """
             
             markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="back_to_main"))
+            markup.add(types.InlineKeyboardButton("📋 Open Menu", callback_data="back_to_main"))
             
             bot.edit_message_text(
                 help_text,
