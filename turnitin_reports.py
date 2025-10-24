@@ -106,8 +106,8 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                 
                 # Wait for table to reload after first sort click
                 try:
-                    page.wait_for_load_state('domcontentloaded', timeout=15000)
-                    page.wait_for_load_state('networkidle', timeout=15000)
+                    page.wait_for_load_state('domcontentloaded', timeout=30000)
+                    page.wait_for_load_state('networkidle', timeout=30000)
                     log(f"[{worker_name}] Table loaded after first sort click")
                 except Exception as load_err:
                     log(f"[{worker_name}] Load wait after first sort: {load_err}")
@@ -133,8 +133,8 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                     header_element_2.click()
                     # Wait for table to reload after second sort click
                     try:
-                        page.wait_for_load_state('domcontentloaded', timeout=15000)
-                        page.wait_for_load_state('networkidle', timeout=15000)
+                        page.wait_for_load_state('domcontentloaded', timeout=30000)
+                        page.wait_for_load_state('networkidle', timeout=30000)
                         log(f"[{worker_name}] Table loaded after second sort click - submission with title '{submission_title}' should be near top")
                     except Exception as load_err:
                         log(f"[{worker_name}] Load wait after second sort: {load_err}")
@@ -260,7 +260,8 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                                     if title_link:
                                         # Try to capture popup window
                                         try:
-                                            with page.expect_popup(timeout=5000) as popup_info:
+                                            # Try to capture popup/new tab (some accounts open viewer in a new window)
+                                            with page.expect_popup(timeout=15000) as popup_info:
                                                 log(f"[{worker_name}] Clicking title link and expecting popup...")
                                                 title_link.click()
                                             new_page = popup_info.value
@@ -278,8 +279,29 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                                             log(f"[{worker_name}] Opened submission in new window/tab successfully")
                                             return new_page
                                         except Exception as popup_err:
-                                            # Fallback: double-click pattern on same page
+                                            # Fallback: try navigating directly by href, then double-click same page
                                             log(f"[{worker_name}] No popup captured ({popup_err}); falling back to double-click on same page")
+                                            try:
+                                                href = title_link.get_attribute('href') if title_link else None
+                                            except Exception:
+                                                href = None
+                                            if href:
+                                                log(f"[{worker_name}] Navigating directly to viewer via href from title link")
+                                                try:
+                                                    page.goto(href, timeout=45000, wait_until='load')
+                                                    try:
+                                                        page.wait_for_load_state('networkidle', timeout=45000)
+                                                    except Exception:
+                                                        pass
+                                                    # Check if viewer is visible
+                                                    try:
+                                                        page.wait_for_selector('tii-sws-submission-workspace, tii-sws-header', timeout=45000)
+                                                        log(f"[{worker_name}] Viewer opened via direct href navigation")
+                                                        return page
+                                                    except Exception:
+                                                        log(f"[{worker_name}] Viewer components not visible after href navigation; continuing with double-click fallback")
+                                                except Exception as href_err:
+                                                    log(f"[{worker_name}] Direct href navigation failed: {href_err}")
                                             log(f"[{worker_name}] Clicking submission link (click 1/2)...")
                                             title_link.click()
                                             try:
@@ -310,7 +332,7 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                                                 time.sleep(2)
                                                 random_wait(1, 2)
                                                 log(f"[{worker_name}] Submission page fully loaded after double click")
-                                                # If we didn't land on the viewer, try clicking the Similarity report link in the row to open the viewer
+                                                # If we didn't land on the viewer, attempt direct href again (in case element re-rendered)
                                                 current_after_click = page.url
                                                 if ("ev.turnitin.com" in current_after_click) or ("newreport" in current_after_click) or ("paper_frameset" in current_after_click):
                                                     log(f"[{worker_name}] Detected viewer URL after double click: {current_after_click}")
@@ -324,7 +346,7 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                                                             log(f"[{worker_name}] Double-click did not navigate; trying Similarity report link...")
                                                             # First try with popup
                                                             try:
-                                                                with page.expect_popup(timeout=5000) as popup_info2:
+                                                                with page.expect_popup(timeout=15000) as popup_info2:
                                                                     report_link.click()
                                                                 new_page2 = popup_info2.value
                                                                 try:
@@ -344,13 +366,13 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                                                                 # Popup failed, try same-tab navigation
                                                                 report_link.click()
                                                                 try:
-                                                                    page.wait_for_url(lambda url: 'ev.turnitin.com/app/carta' in url, timeout=15000)
+                                                                    page.wait_for_url(lambda url: 'ev.turnitin.com/app/carta' in url, timeout=45000)
                                                                     log(f"[{worker_name}] Viewer URL detected in same tab")
                                                                 except Exception:
                                                                     pass
                                                                 # Wait for viewer components to appear
                                                                 try:
-                                                                    page.wait_for_selector('tii-sws-submission-workspace, tii-sws-header', timeout=15000)
+                                                                    page.wait_for_selector('tii-sws-submission-workspace, tii-sws-header', timeout=45000)
                                                                     log(f"[{worker_name}] Viewer opened in same tab via Similarity link")
                                                                     return page
                                                                 except Exception as comp_err:
