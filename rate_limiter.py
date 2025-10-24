@@ -3,7 +3,7 @@ import os
 from datetime import datetime, timedelta
 
 COOLDOWN_FILE = "user_cooldowns.json"
-COOLDOWN_DURATION_MINUTES = 10  # 10 phút
+COOLDOWN_DURATION_MINUTES = 8  # 8 phút
 
 def load_cooldowns():
     """Load user cooldown data from file"""
@@ -98,8 +98,8 @@ def get_cooldown_message(remaining_seconds, cooldown_end):
 🕐 <b>Available at / Có thể gửi lại lúc:</b> {cooldown_end_str}
 
 ❓ <b>Why? / Tại sao?</b>
-To prevent system overload, there is a 10-minute cooldown between uploads.
-Để tránh quá tải hệ thống, có thời gian chờ 10 phút giữa các lần gửi file.
+To prevent system overload, there is an 8-minute cooldown between uploads.
+Để tránh quá tải hệ thống, có thời gian chờ 8 phút giữa các lần gửi file.
 
 ✅ You can upload again after the cooldown period.
 ✅ Bạn có thể gửi file mới sau khi hết thời gian chờ."""
