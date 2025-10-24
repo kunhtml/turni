@@ -872,6 +872,69 @@ def add_key_command(message):
     else:
         bot.reply_to(message, f"✅ Created key <b>{key}</b> with <b>{uses}</b> uses\n✅ Đã tạo key <b>{key}</b> với <b>{uses}</b> lượt", parse_mode='HTML')
 
+@bot.message_handler(commands=['keys'])
+def view_keys_command(message):
+    """Admin command to view all active keys and redemption stats"""
+    if message.from_user.id not in ADMIN_TELEGRAM_IDS:
+        return
+    
+    keys = load_keys()
+    
+    if not keys:
+        bot.reply_to(message, "📭 <b>No keys created yet</b>")
+        return
+    
+    # Calculate stats
+    total_keys = len(keys)
+    active_keys = sum(1 for k in keys.values() if not k.get('redeemed', False))
+    redeemed_keys = total_keys - active_keys
+    total_uses = sum(int(k.get('uses', 0)) for k in keys.values())
+    used_uses = sum(int(k.get('uses', 0)) for k in keys.values() if k.get('redeemed', False))
+    available_uses = total_uses - used_uses
+    
+    # Build stats header
+    stats_text = f"""🔑 <b>Key Management Statistics</b>
+
+📊 <b>Summary / Tóm tắt:</b>
+• <b>Total Keys:</b> {total_keys}
+• <b>Active Keys (Chưa dùng):</b> {active_keys}
+• <b>Redeemed Keys (Đã dùng):</b> {redeemed_keys}
+
+📈 <b>Usage Stats / Thống kê sử dụng:</b>
+• <b>Total Uses (Tổng lượt):</b> {total_uses}
+• <b>Available Uses (Lượt khả dụng):</b> {available_uses}
+• <b>Redeemed Uses (Lượt đã dùng):</b> {used_uses}
+
+"""
+    
+    # Build key details table
+    if active_keys > 0:
+        stats_text += f"<b>📌 Active Keys (Tối đa 20)</b>\n"
+        active_count = 0
+        for key_name, key_info in sorted(keys.items()):
+            if not key_info.get('redeemed', False) and active_count < 20:
+                uses = int(key_info.get('uses', 0))
+                created_at = key_info.get('created_at', 'Unknown')[:10]
+                stats_text += f"• <code>{key_name}</code> → {uses} uses | Created: {created_at}\n"
+                active_count += 1
+        if active_count >= 20:
+            stats_text += f"... and {active_keys - 20} more active keys\n"
+    
+    if redeemed_keys > 0:
+        stats_text += f"\n<b>✅ Redeemed Keys (Tối đa 10)</b>\n"
+        redeemed_count = 0
+        for key_name, key_info in sorted(keys.items()):
+            if key_info.get('redeemed', False) and redeemed_count < 10:
+                uses = int(key_info.get('uses', 0))
+                redeemed_by = key_info.get('redeemed_by', 'Unknown')
+                redeemed_at = key_info.get('redeemed_at', 'Unknown')[:10]
+                stats_text += f"• <code>{key_name}</code> → {uses} uses | By: {redeemed_by} | At: {redeemed_at}\n"
+                redeemed_count += 1
+        if redeemed_count >= 10:
+            stats_text += f"... and {redeemed_keys - 10} more redeemed keys\n"
+    
+    bot.send_message(message.chat.id, stats_text)
+
 @bot.message_handler(commands=['edit_subscription'])
 def edit_subscription_command(message):
     """Admin command to edit subscription end date"""
