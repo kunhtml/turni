@@ -7,6 +7,7 @@ import signal
 import sys
 import re
 import gdown
+import subprocess
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import telebot
@@ -62,6 +63,27 @@ BANK_DETAILS = """🏦 Commercial Bank
 def log(message: str):
     """Log with timestamp"""
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
+
+def try_git_pull_on_startup():
+    """Attempt to update the repository by running 'git pull origin main'.
+    This is best-effort and will not crash the bot if it fails (e.g., not a git repo)."""
+    try:
+        log("Attempting to update code from git (git pull origin main)...")
+        result = subprocess.run(
+            ["git", "--no-pager", "pull", "origin", "main"],
+            capture_output=True,
+            text=True,
+            timeout=45,
+            cwd=os.getcwd()
+        )
+        if result.returncode == 0:
+            out = (result.stdout or "").strip()
+            log(f"Git pull success. {out[:500]}")
+        else:
+            err = (result.stderr or "").strip()
+            log(f"Git pull failed/skipped (code {result.returncode}). {err[:500]}")
+    except Exception as e:
+        log(f"Git pull not executed: {e}")
 
 def signal_handler(sig, frame):
     """Handle shutdown signals"""
@@ -1001,6 +1023,37 @@ def redeem_key_command(message):
         "📤 Send a document to start processing / Gửi tài liệu để bắt đầu xử lý."
     ), parse_mode='HTML')
 
+@bot.message_handler(commands=['help'])
+def help_command(message):
+    """Show bilingual help like the Help button"""
+    help_text = """❓ <b>Help / Hướng dẫn</b>
+
+<b>1) Redeem Key / Sử dụng Key</b>
+• When you have a key, use: /key YOURKEY
+    Khi bạn có key, hãy dùng: <code>/key YOURKEY</code>
+    Example / Ví dụ: <code>/key VIPOCT</code>
+    → You will receive the same number of uses as the key provides
+        Bạn sẽ nhận số lượt sử dụng tương ứng với key
+
+<b>Notes / Lưu ý:</b>
+• Each key can be redeemed once (one-time)
+    Mỗi key chỉ dùng 1 lần
+• After redeeming, check your status with /check
+    Sau khi dùng key, có thể kiểm tra bằng <code>/check</code>
+
+<b>2) Send documents / Gửi tài liệu</b>
+• Direct upload up to 20MB (Telegram)
+    Gửi file trực tiếp tối đa 20MB
+ 
+
+<b>3) Supported formats / Định dạng hỗ trợ</b>
+• PDF, DOC, DOCX, TXT, RTF, ODT, HTML
+"""
+
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="back_to_main"))
+    bot.send_message(message.chat.id, help_text, reply_markup=markup)
+
 @bot.message_handler(commands=['id'])
 def id_command(message):
     """Show user ID"""
@@ -1454,6 +1507,9 @@ def handle_document(message):
     process_user_document(message)
 
 if __name__ == "__main__":
+    # Update repository before starting the bot (best-effort)
+    try_git_pull_on_startup()
+
     # Import and register callback handlers
     from bot_callbacks import register_callback_handlers
     register_callback_handlers(bot, ADMIN_TELEGRAM_ID, MONTHLY_PLANS, DOCUMENT_PLANS, BANK_DETAILS, 
