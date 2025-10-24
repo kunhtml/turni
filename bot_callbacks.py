@@ -48,19 +48,28 @@ def register_callback_handlers(bot, ADMIN_TELEGRAM_ID, MONTHLY_PLANS, DOCUMENT_P
             show_user_id(call, bot, create_main_menu)
         
         elif call.data == "help":
-            help_text = """ℹ️ <b>How to use this bot:</b>
+            help_text = """❓ <b>Help / Hướng dẫn</b>
 
-1️⃣ Choose a subscription plan
-2️⃣ Make payment to bank account
-3️⃣ Send payment slip via WhatsApp
-4️⃣ Wait for admin approval
-5️⃣ Start uploading documents!
+<b>1) Redeem Key / Sử dụng Key</b>
+• Khi bạn có key, hãy gửi lệnh:
+<code>/key YOURKEY</code>
+Ví dụ: <code>/key VIPOCT</code>
+→ Bạn sẽ nhận số lượt sử dụng tương ứng với key (ví dụ key 2 lượt sẽ cộng 2 lượt)
 
-📄 <b>Supported formats:</b> PDF, DOC, DOCX
-📝 <b>Document requirements:</b> 500-10,000 words
-📊 <b>Reports generated:</b> Similarity + AI Writing
+<b>Lưu ý:</b>
+• Mỗi key chỉ sử dụng 1 lần (one-time redeem)
+• Sau khi dùng key, bạn có thể kiểm tra bằng <code>/check</code>
 
-💬 For support, contact: +94702947854"""
+<b>2) Gửi tài liệu</b>
+• Gửi file trực tiếp (tối đa 20MB) hoặc gửi link Google Drive (tối đa 100MB)
+• Hệ thống sẽ tạo báo cáo: Similarity và AI Writing (nếu khả dụng)
+
+<b>3) Định dạng hỗ trợ</b>
+• PDF, DOC, DOCX, TXT, RTF, ODT, HTML
+
+<b>4) Liên hệ hỗ trợ</b>
+• WhatsApp: +94702947854
+"""
             
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="back_to_main"))
