@@ -261,34 +261,40 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                                         # Try to capture popup window
                                         try:
                                             # Try to capture popup/new tab (some accounts open viewer in a new window)
-                                            with page.expect_popup(timeout=15000) as popup_info:
+                                            with page.expect_popup(timeout=30000) as popup_info:  # Increased from 15s to 30s
                                                 log(f"[{worker_name}] Clicking title link and expecting popup...")
                                                 title_link.click()
                                             new_page = popup_info.value
                                             # Wait for the new page to load fully
                                             try:
-                                                new_page.wait_for_load_state('domcontentloaded', timeout=30000)
+                                                new_page.wait_for_load_state('domcontentloaded', timeout=45000)
                                             except Exception:
                                                 pass
                                             try:
-                                                new_page.wait_for_load_state('networkidle', timeout=30000)
+                                                new_page.wait_for_load_state('networkidle', timeout=45000)
                                             except Exception:
                                                 pass
-                                            time.sleep(2)
+                                            time.sleep(3)  # Increased from 2s
                                             random_wait(1, 2)
                                             log(f"[{worker_name}] Opened submission in new window/tab successfully")
                                             return new_page
                                         except Exception as popup_err:
                                             # Fallback: try navigating directly by href, then double-click same page
-                                            log(f"[{worker_name}] No popup captured ({popup_err}); falling back to double-click on same page")
+                                            log(f"[{worker_name}] No popup captured (timeout 30s exceeded: {popup_err}); falling back to href or double-click")
                                             try:
                                                 href = title_link.get_attribute('href') if title_link else None
                                             except Exception:
                                                 href = None
                                             if href:
-                                                log(f"[{worker_name}] Navigating directly to viewer via href from title link")
+                                                log(f"[{worker_name}] Attempting direct navigation via href: {href}")
                                                 try:
-                                                    page.goto(href, timeout=45000, wait_until='load')
+                                                    # Use wait_until='commit' instead of 'load' for better resilience
+                                                    page.goto(href, timeout=60000, wait_until='commit')
+                                                    time.sleep(3)  # Give page time to render
+                                                    try:
+                                                        page.wait_for_load_state('domcontentloaded', timeout=45000)
+                                                    except Exception:
+                                                        pass
                                                     try:
                                                         page.wait_for_load_state('networkidle', timeout=45000)
                                                     except Exception:
@@ -301,7 +307,7 @@ def _find_submission_with_retry_impl(page, submission_title, chat_id, bot, proce
                                                     except Exception:
                                                         log(f"[{worker_name}] Viewer components not visible after href navigation; continuing with double-click fallback")
                                                 except Exception as href_err:
-                                                    log(f"[{worker_name}] Direct href navigation failed: {href_err}")
+                                                    log(f"[{worker_name}] Direct href navigation failed ({href_err}); will try double-click fallback")
                                             log(f"[{worker_name}] Clicking submission link (click 1/2)...")
                                             title_link.click()
                                             try:
