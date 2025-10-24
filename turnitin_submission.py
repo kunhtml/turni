@@ -294,31 +294,64 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
     processing_messages.append(msg.message_id)
 
     # Wait for "Please confirm that this is the file you would like to submit..." banner
-    # For large files (>30MB), processing can take 2-3 minutes
+    # For large files (>30MB), we need to wait for processing states instead of fixed timeout
     file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
     if file_size_mb > 30:
-        wait_timeout = 180000  # 3 minutes for large files
-        log(f"[{worker_name}] Large file detected ({file_size_mb:.2f} MB), using extended timeout: {wait_timeout/1000}s")
+        log(f"[{worker_name}] Large file detected ({file_size_mb:.2f} MB), will wait for processing states...")
     else:
-        wait_timeout = 90000  # 90 seconds for normal files
+        log(f"[{worker_name}] Normal file ({file_size_mb:.2f} MB), waiting for confirmation...")
     
+    # Wait for processing to start
+    banner_appeared = False
+    processing_detected = False
+    
+    # Step 1: Wait for processing state to appear
     try:
-        # Wait for state-confirm to be visible (not just present)
-        page.wait_for_selector('.state-confirm', state='visible', timeout=wait_timeout)
-        log(f"[{worker_name}] Confirmation banner appeared")
-    except Exception as banner_error:
-        log(f"[{worker_name}] Banner wait failed: {banner_error}")
-        # Try alternative: wait for confirm button instead
+        page.wait_for_selector('.state-processing, #submission-preview-processing', timeout=30000)
+        log(f"[{worker_name}] File processing started...")
+        processing_detected = True
+    except Exception as proc_err:
+        log(f"[{worker_name}] Processing state not detected: {proc_err}")
+    
+    # Step 2: For large files, wait for "still-processing" message
+    if file_size_mb > 30 or processing_detected:
         try:
-            page.wait_for_selector('#confirm-btn', state='visible', timeout=30000)
-            log(f"[{worker_name}] Confirm button appeared (alternative check)")
-        except Exception as btn_error:
-            log(f"[{worker_name}] Confirm button wait also failed: {btn_error}")
+            # Wait for "still-processing" message to appear (indicates long processing)
+            page.wait_for_selector('.state-still-processing', timeout=60000)
+            log(f"[{worker_name}] Long processing message appeared - file is being processed in background")
+            # For very large files, the confirm button may be available even during processing
+            time.sleep(5)
+        except Exception:
+            log(f"[{worker_name}] No long-processing message (file may have processed quickly)")
+    
+    # Step 3: Wait for confirm button to exist and become enabled
+    try:
+        page.wait_for_selector('#confirm-btn', state='attached', timeout=300000)  # 5 minutes max
+        log(f"[{worker_name}] Confirm button detected")
+        banner_appeared = True
+    except Exception as banner_error:
+        log(f"[{worker_name}] Confirm button wait failed: {banner_error}")
+        # Try alternative indicators
+        for alt_selector in [
+            '.state-confirm',
+            '#submission-metadata-title',
+            '[class*="submission-metadata"]'
+        ]:
+            try:
+                page.wait_for_selector(alt_selector, timeout=30000)
+                log(f"[{worker_name}] Alternative confirmation element found: {alt_selector}")
+                banner_appeared = True
+                break
+            except Exception:
+                continue
+    
+    if not banner_appeared:
+        log(f"[{worker_name}] ⚠️ Warning: No confirmation elements detected, will attempt to proceed anyway")
 
     # Wait for confirm button to be enabled (not disabled)
     log(f"[{worker_name}] Waiting for confirm button to be enabled...")
     confirm_button_enabled = False
-    for attempt in range(60):  # Try for up to 60 seconds (increased from 30)
+    for attempt in range(90):  # Try for up to 90 seconds (increased from 60)
         try:
             confirm_btn = page.locator('#confirm-btn')
             if confirm_btn.count() > 0:
@@ -333,51 +366,76 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
             continue
 
     if not confirm_button_enabled:
-        log(f"[{worker_name}] Warning: Confirm button may still be disabled, but continuing...")
+        log(f"[{worker_name}] Warning: Confirm button may still be disabled after 90s wait, attempting to proceed...")
 
     # Extract metadata with comprehensive error handling
+    # Wait a bit longer for metadata to populate after confirm button appears
+    time.sleep(2)
+    
     try:
         # Get submission title
         try:
             actual_submission_title = page.locator("#submission-metadata-title").inner_text(timeout=10000)
             if not actual_submission_title or actual_submission_title.strip() == "":
                 actual_submission_title = submission_title
-        except:
+        except Exception as title_err:
+            log(f"[{worker_name}] Could not extract title: {title_err}")
             actual_submission_title = submission_title
 
-        # Get page count
-        try:
-            page_count = page.locator("#submission-metadata-pagecount").inner_text(timeout=5000)
-            page_count = page_count.strip() if page_count else "Unknown"
-        except:
-            page_count = "Unknown"
+        # Get page count with retry
+        page_count = "Unknown"
+        for retry in range(3):
+            try:
+                page_count = page.locator("#submission-metadata-pagecount").inner_text(timeout=5000)
+                if page_count and page_count.strip():
+                    page_count = page_count.strip()
+                    break
+            except Exception:
+                if retry < 2:
+                    time.sleep(1)
+                    continue
+                page_count = "Unknown"
 
-        # Get word count
-        try:
-            word_count = page.locator("#submission-metadata-wordcount").inner_text(timeout=5000)
-            word_count = word_count.strip() if word_count else "Unknown"
-        except:
-            word_count = "Unknown"
+        # Get word count with retry
+        word_count = "Unknown"
+        for retry in range(3):
+            try:
+                word_count = page.locator("#submission-metadata-wordcount").inner_text(timeout=5000)
+                if word_count and word_count.strip():
+                    word_count = word_count.strip()
+                    break
+            except Exception:
+                if retry < 2:
+                    time.sleep(1)
+                    continue
+                word_count = "Unknown"
 
-        # Get character count (new)
-        try:
-            character_count = page.locator("#submission-metadata-charactercount").inner_text(timeout=5000)
-            character_count = character_count.strip() if character_count else "Unknown"
-        except:
-            character_count = "Unknown"
+        # Get character count with retry
+        character_count = "Unknown"
+        for retry in range(3):
+            try:
+                character_count = page.locator("#submission-metadata-charactercount").inner_text(timeout=5000)
+                if character_count and character_count.strip():
+                    character_count = character_count.strip()
+                    break
+            except Exception:
+                if retry < 2:
+                    time.sleep(1)
+                    continue
+                character_count = "Unknown"
 
-        # Get file size (additional info)
+        # Get file size
         try:
             file_size = page.locator("#submission-metadata-filesize").inner_text(timeout=5000)
             file_size = file_size.strip() if file_size else "Unknown"
-        except:
+        except Exception:
             file_size = "Unknown"
 
-        # Get submission date and ID (for future use and user confirmation)
+        # Get submission date and ID
         try:
             submission_date = page.locator("#submission-metadata-date").inner_text(timeout=5000)
             submission_date = submission_date.strip() if submission_date else "Unknown"
-        except:
+        except Exception:
             submission_date = "Unknown"
 
         try:
