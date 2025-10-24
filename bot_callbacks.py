@@ -48,7 +48,7 @@ def register_callback_handlers(bot, ADMIN_TELEGRAM_ID, MONTHLY_PLANS, DOCUMENT_P
             show_user_id(call, bot, create_main_menu)
         
         elif call.data == "help":
-                        help_text = """❓ <b>Help / Hướng dẫn</b>
+            help_text = """❓ <b>Help / Hướng dẫn</b>
 
 <b>1) Redeem Key / Sử dụng Key</b>
 • When you have a key, use: /key YOURKEY
@@ -66,16 +66,10 @@ def register_callback_handlers(bot, ADMIN_TELEGRAM_ID, MONTHLY_PLANS, DOCUMENT_P
 <b>2) Send documents / Gửi tài liệu</b>
 • Direct upload up to 20MB (Telegram)
     Gửi file trực tiếp tối đa 20MB
-• Or send a Google Drive link up to 100MB
-    Hoặc gửi link Google Drive tối đa 100MB
-• The bot generates: Similarity + AI Writing (if available)
-    Hệ thống tạo: Similarity + AI Writing (nếu khả dụng)
+ 
 
 <b>3) Supported formats / Định dạng hỗ trợ</b>
 • PDF, DOC, DOCX, TXT, RTF, ODT, HTML
-
-<b>4) Support / Liên hệ hỗ trợ</b>
-• WhatsApp: +94702947854
 """
             
             markup = types.InlineKeyboardMarkup()
