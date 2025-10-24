@@ -438,12 +438,17 @@ def create_admin_menu():
     return markup
 
 def extract_google_drive_file_id(url):
-    """Extract file ID from Google Drive URL"""
+    """Extract file ID from Google Drive or Google Docs URL"""
     # Pattern 1: https://drive.google.com/file/d/FILE_ID/view
     match = re.search(r'/file/d/([a-zA-Z0-9_-]+)', url)
     if match:
         return match.group(1)
     
+    # Pattern 1b (Docs): https://docs.google.com/document/d/FILE_ID/edit
+    match = re.search(r'/document/d/([a-zA-Z0-9_-]+)', url)
+    if match:
+        return match.group(1)
+
     # Pattern 2: https://drive.google.com/open?id=FILE_ID
     match = re.search(r'[?&]id=([a-zA-Z0-9_-]+)', url)
     if match:
@@ -456,6 +461,10 @@ def extract_google_drive_file_id(url):
     
     return None
 
+def is_google_docs_url(url: str) -> bool:
+    """Return True if URL is a Google Docs document link"""
+    return ('docs.google.com/document/d/' in url)
+
 def download_from_google_drive(file_id, output_path):
     """Download file from Google Drive using gdown"""
     try:
@@ -465,6 +474,24 @@ def download_from_google_drive(file_id, output_path):
     except Exception as e:
         log(f"Google Drive download error: {e}")
         return False
+
+def download_google_doc_as_docx(doc_id: str, output_path_without_ext: str) -> tuple[bool, str]:
+    """Download a Google Docs document by exporting as DOCX.
+    Returns (success, final_path)."""
+    try:
+        import requests
+        export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=docx"
+        resp = requests.get(export_url, timeout=60)
+        if resp.status_code != 200:
+            log(f"Google Docs export failed: HTTP {resp.status_code}")
+            return False, ""
+        final_path = output_path_without_ext + ".docx"
+        with open(final_path, 'wb') as f:
+            f.write(resp.content)
+        return True, final_path
+    except Exception as e:
+        log(f"Google Docs export error: {e}")
+        return False, ""
 
 def process_google_drive_link(message, drive_url):
     """Process Google Drive link and download file"""
@@ -499,8 +526,13 @@ def process_google_drive_link(message, drive_url):
         temp_filename = f"{message.chat.id}_{timestamp}_gdrive_temp"
         file_path = os.path.join(upload_dir, temp_filename)
         
-        # Download file
-        success = download_from_google_drive(file_id, file_path)
+        # Download file (Docs vs Drive files)
+        if is_google_docs_url(drive_url):
+            success, file_path = download_google_doc_as_docx(file_id, file_path)
+            original_filename = f"document_{timestamp}.docx"
+        else:
+            success = download_from_google_drive(file_id, file_path)
+            original_filename = f"document_{timestamp}.docx"  # default; may be updated if gdown writes extension
         
         if not success or not os.path.exists(file_path):
             bot.edit_message_text(
@@ -529,15 +561,14 @@ def process_google_drive_link(message, drive_url):
             )
             return
         
-        # Detect file extension from downloaded file (gdown adds it automatically)
-        original_filename = f"document_{timestamp}.docx"  # Default
-        if os.path.exists(file_path):
-            # Try to get actual filename
-            for ext in ['.docx', '.doc', '.pdf', '.txt', '.pptx', '.xlsx']:
-                if os.path.exists(file_path + ext):
-                    file_path = file_path + ext
-                    original_filename = f"document_{timestamp}{ext}"
-                    break
+        # Detect file extension from downloaded file (gdown may add it automatically)
+        if not is_google_docs_url(drive_url):
+            if os.path.exists(file_path):
+                for ext in ['.docx', '.doc', '.pdf', '.txt', '.pptx', '.xlsx']:
+                    if os.path.exists(file_path + ext):
+                        file_path = file_path + ext
+                        original_filename = f"document_{timestamp}{ext}"
+                        break
         
         # Rename to proper filename
         new_filename = f"{message.chat.id}_{timestamp}_{original_filename}"
@@ -1446,7 +1477,7 @@ def clear_cooldown_command(message):
     else:
         bot.reply_to(message, f"❌ User {target_user_id} không có cooldown")
 
-@bot.message_handler(func=lambda message: message.text and 'drive.google.com' in message.text)
+@bot.message_handler(func=lambda message: message.text and ('drive.google.com' in message.text or 'docs.google.com/document/' in message.text))
 def handle_google_drive_link(message):
     """Handle Google Drive links"""
     user_id = message.from_user.id
