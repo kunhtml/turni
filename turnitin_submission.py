@@ -39,6 +39,25 @@ def submit_document(page, file_path, chat_id, timestamp, bot, processing_message
     except Exception as recover_err:
         log(f"[{worker_name}] [{worker_name}] Recovery check failed (continuing): {recover_err}")
 
+    # Navigate to Quick Submit form page if not already there
+    try:
+        current_url = page.url
+        log(f"[{worker_name}] Current URL before submission: {current_url}")
+        
+        # Check if we're on the Quick Submit form page (where Submit button exists)
+        if 't_custom_search.asp' not in current_url and 'submit_paper' not in current_url:
+            log(f"[{worker_name}] Not on Quick Submit form page, navigating there now...")
+            navigate_to_quick_submit()
+            try:
+                page.wait_for_load_state('domcontentloaded', timeout=30000)
+                page.wait_for_load_state('networkidle', timeout=30000)
+            except Exception as wait_err:
+                log(f"[{worker_name}] Wait after navigation: {wait_err}")
+            random_wait(2, 3)
+            log(f"[{worker_name}] Successfully navigated to Quick Submit form page")
+    except Exception as nav_check_err:
+        log(f"[{worker_name}] Error checking/navigating to Quick Submit: {nav_check_err}")
+
     # Wait for page to load
     try:
         page.wait_for_load_state('domcontentloaded', timeout=30000)  # Wait for DOM only
