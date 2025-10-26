@@ -228,9 +228,25 @@ def get_or_create_browser_session():
         try:
             # Test if session is still alive
             current_url = browser_session['page'].url
-            browser_session['last_activity'] = datetime.now()
-            log(f"[{threading.current_thread().name}] Reusing existing browser session - Current URL: {current_url}")
-            return browser_session['page']
+            
+            # Check session age - refresh if older than 1 hour
+            if browser_session['last_activity']:
+                session_age = datetime.now() - browser_session['last_activity']
+                session_age_minutes = session_age.total_seconds() / 60
+                
+                if session_age_minutes > 60:  # 1 hour
+                    log(f"[{threading.current_thread().name}] Session is {session_age_minutes:.1f} minutes old (>60 min), refreshing login...")
+                    cleanup_browser_session()
+                    # Will create new session below
+                else:
+                    browser_session['last_activity'] = datetime.now()
+                    log(f"[{threading.current_thread().name}] Reusing existing browser session ({session_age_minutes:.1f} min old) - Current URL: {current_url}")
+                    return browser_session['page']
+            else:
+                # No timestamp, update it and continue
+                browser_session['last_activity'] = datetime.now()
+                log(f"[{threading.current_thread().name}] Reusing existing browser session - Current URL: {current_url}")
+                return browser_session['page']
         except Exception as e:
             log(f"[{threading.current_thread().name}] Existing session invalid: {e}, creating new session")
             cleanup_browser_session()
