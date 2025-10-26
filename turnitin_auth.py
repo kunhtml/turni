@@ -449,6 +449,15 @@ def check_and_perform_login():
                 page.wait_for_selector('a.sn_quick_submit', timeout=10000)
                 log("Already logged in - Quick Submit found")
                 save_cookies()
+                
+                # Clear login flag - bot is ready to accept files
+                try:
+                    from main import bot_is_logging_in
+                    bot_is_logging_in.clear()
+                    log(f"[{threading.current_thread().name}] 🔓 Already logged in - file uploads allowed")
+                except Exception as flag_err:
+                    log(f"Could not clear login flag: {flag_err}")
+                
                 return True
             except:
                 log("Need to perform login")
@@ -722,12 +731,30 @@ def check_and_perform_login():
                         page.wait_for_load_state('networkidle', timeout=30000)
                         log("✅ Quick Submit page loaded successfully!")
                         save_cookies()
+                        
+                        # Clear login flag - bot is now ready to accept files
+                        try:
+                            from main import bot_is_logging_in
+                            bot_is_logging_in.clear()
+                            log(f"[{threading.current_thread().name}] 🔓 Login complete - file uploads now allowed")
+                        except Exception as flag_err:
+                            log(f"Could not clear login flag: {flag_err}")
+                        
                         return True
                 except Exception as click_err:
                     log(f"Error clicking Quick Submit: {click_err}")
                     # If click failed but element exists, we're still logged in
                     log("Quick Submit element exists but click failed - trying alternative...")
                     save_cookies()
+                    
+                    # Clear login flag - bot is now ready to accept files
+                    try:
+                        from main import bot_is_logging_in
+                        bot_is_logging_in.clear()
+                        log(f"[{threading.current_thread().name}] 🔓 Login complete - file uploads now allowed")
+                    except Exception as flag_err:
+                        log(f"Could not clear login flag: {flag_err}")
+                    
                     return True
                     
             except PlaywrightTimeout:
@@ -761,6 +788,15 @@ def check_and_perform_login():
                             page.wait_for_load_state('networkidle', timeout=30000)
                             log("✅ Quick Submit clicked successfully")
                             save_cookies()
+                            
+                            # Clear login flag - bot is now ready to accept files
+                            try:
+                                from main import bot_is_logging_in
+                                bot_is_logging_in.clear()
+                                log(f"[{threading.current_thread().name}] 🔓 Login complete - file uploads now allowed")
+                            except Exception as flag_err:
+                                log(f"Could not clear login flag: {flag_err}")
+                            
                             return True
                     except Exception as e:
                         log(f"{description} failed: {e}")
@@ -768,6 +804,15 @@ def check_and_perform_login():
                 
                 log("Could not find Quick Submit link with any selector, but login appears successful")
                 save_cookies()
+                
+                # Clear login flag - bot is now ready to accept files
+                try:
+                    from main import bot_is_logging_in
+                    bot_is_logging_in.clear()
+                    log(f"[{threading.current_thread().name}] 🔓 Login complete - file uploads now allowed")
+                except Exception as flag_err:
+                    log(f"Could not clear login flag: {flag_err}")
+                
                 return True
                 
             except Exception as e:
@@ -776,6 +821,15 @@ def check_and_perform_login():
                 
         except Exception as e:
             log(f"Login process failed: {e}")
+            
+            # Clear login flag on failure - allow retries
+            try:
+                from main import bot_is_logging_in
+                bot_is_logging_in.clear()
+                log(f"[{threading.current_thread().name}] ⚠️ Login failed - cleared flag for retry")
+            except Exception as flag_err:
+                log(f"Could not clear login flag: {flag_err}")
+            
             return False
 
 def navigate_to_quick_submit():
