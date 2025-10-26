@@ -32,6 +32,10 @@ ADMIN_TELEGRAM_ID = ADMIN_TELEGRAM_IDS[0] if ADMIN_TELEGRAM_IDS else None  # Kee
 # Initialize standard bot
 bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode='HTML')
 
+# Global login state flag - prevents file uploads during login
+bot_is_logging_in = threading.Event()  # Set when logging in, clear when ready
+bot_is_logging_in.clear()  # Initially ready (not logging in)
+
 # Processing queue and worker threads
 processing_queue = queue.Queue()
 worker_threads = []
@@ -1535,6 +1539,18 @@ def handle_google_drive_link(message):
     
     log(f"DEBUG: Google Drive link received from user {user_id}")
     
+    # Check if bot is currently logging in - block all uploads
+    if bot_is_logging_in.is_set():
+        bot.reply_to(
+            message,
+            "🔄 <b>Bot is cleaning, please wait...</b>\n"
+            "🔄 <b>Bot đang làm sạch, vui lòng chờ...</b>\n\n"
+            "⏳ The bot is refreshing its session. Please try again in a moment.\n"
+            "⏳ Bot đang làm mới phiên. Vui lòng thử lại sau giây lát."
+        )
+        log(f"User {user_id} Google Drive link blocked - bot is logging in")
+        return
+    
     # Admin has unlimited access and no cooldown
     if user_id in ADMIN_TELEGRAM_IDS:
         process_google_drive_link(message, message.text.strip())
@@ -1593,6 +1609,18 @@ def handle_document(message):
     user_id = message.from_user.id
     
     log(f"DEBUG: Document received from user {user_id}")
+    
+    # Check if bot is currently logging in - block all uploads
+    if bot_is_logging_in.is_set():
+        bot.reply_to(
+            message,
+            "🔄 <b>Bot is cleaning, please wait...</b>\n"
+            "🔄 <b>Bot đang làm sạch, vui lòng chờ...</b>\n\n"
+            "⏳ The bot is refreshing its session. Please try again in a moment.\n"
+            "⏳ Bot đang làm mới phiên. Vui lòng thử lại sau giây lát."
+        )
+        log(f"User {user_id} upload blocked - bot is logging in")
+        return
     
     # Admin has unlimited access and no cooldown
     if user_id in ADMIN_TELEGRAM_IDS:
