@@ -392,6 +392,14 @@ def check_and_perform_login():
     browser_session = get_thread_browser_session()
     page = browser_session['page']
     
+    # Notify main.py that login is starting - block all file uploads
+    try:
+        from main import bot_is_logging_in
+        bot_is_logging_in.set()  # Set flag - bot is now logging in
+        log(f"[{threading.current_thread().name}] 🔒 Login started - file uploads blocked")
+    except Exception as flag_err:
+        log(f"Could not set login flag: {flag_err}")
+    
     # Acquire login lock - only one thread logs in at a time
     log(f"[{threading.current_thread().name}] Waiting for login lock...")
     with login_lock:
