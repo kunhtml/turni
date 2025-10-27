@@ -8,6 +8,15 @@ from datetime import datetime
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
+# Stealth mode to bypass bot detection
+try:
+    from playwright_stealth import stealth_sync
+    STEALTH_AVAILABLE = True
+except ImportError:
+    STEALTH_AVAILABLE = False
+    print("⚠️ playwright-stealth not installed. Install with: pip install playwright-stealth")
+    print("   Bot detection bypass will be limited.")
+
 # Load environment variables
 load_dotenv()
 TURNITIN_EMAIL = os.getenv("TURNITIN_EMAIL")
@@ -219,9 +228,6 @@ def get_or_create_browser_session():
     # Get thread-local browser session
     browser_session = get_thread_browser_session()
     
-    # Track if we're refreshing an old session (to avoid loading stale cookies)
-    is_session_refresh = False
-    
     # Check if session exists and is valid
     if (browser_session['browser'] and 
         browser_session['context'] and 
@@ -239,18 +245,7 @@ def get_or_create_browser_session():
                 
                 if session_age_minutes > 60:  # 1 hour
                     log(f"[{threading.current_thread().name}] Session is {session_age_minutes:.1f} minutes old (>60 min), refreshing login...")
-                    
-                    # Delete old cookies before creating new session
-                    cookies_path = "cookies.json"
-                    if os.path.exists(cookies_path):
-                        try:
-                            os.remove(cookies_path)
-                            log("🗑️ Deleted old cookies.json for fresh login")
-                        except Exception as cookie_err:
-                            log(f"Could not delete cookies: {cookie_err}")
-                    
                     cleanup_browser_session()
-                    is_session_refresh = True  # Flag to skip loading cookies
                     # Will create new session below
                 else:
                     browser_session['last_activity'] = datetime.now()
@@ -337,11 +332,10 @@ def get_or_create_browser_session():
                 }
                 
                 # Load cookies if available (but validate them first)
-                # SKIP loading cookies if this is a session refresh (is_session_refresh = True)
                 cookies_path = "cookies.json"
                 should_load_cookies = False
                 
-                if os.path.exists(cookies_path) and not is_session_refresh:
+                if os.path.exists(cookies_path):
                     try:
                         # Validate cookies have session tokens
                         import json
@@ -365,8 +359,6 @@ def get_or_create_browser_session():
                                 log(f"Cookies expired or missing session info (valid: {len(valid_cookies)}/{len(cookies)})")
                     except Exception as e:
                         log(f"Could not validate cookies: {e}, creating fresh session")
-                elif is_session_refresh:
-                    log("🔄 Session refresh - skipping cookies, will perform fresh login")
                 else:
                     log("No saved cookies found, creating fresh session")
                 
@@ -411,9 +403,8 @@ def check_and_perform_login():
     
     # Notify main.py that login is starting - block all file uploads
     try:
-        import main
-        with main.bot_is_logging_in_lock:
-            main.bot_is_logging_in = True
+        from main import bot_is_logging_in
+        bot_is_logging_in.set()  # Set flag - bot is now logging in
         log(f"[{threading.current_thread().name}] 🔒 Login started - file uploads blocked")
     except Exception as flag_err:
         log(f"Could not set login flag: {flag_err}")
@@ -470,9 +461,8 @@ def check_and_perform_login():
                 
                 # Clear login flag - bot is ready to accept files
                 try:
-                    import main
-                    with main.bot_is_logging_in_lock:
-                        main.bot_is_logging_in = False
+                    from main import bot_is_logging_in
+                    bot_is_logging_in.clear()
                     log(f"[{threading.current_thread().name}] 🔓 Already logged in - file uploads allowed")
                 except Exception as flag_err:
                     log(f"Could not clear login flag: {flag_err}")
@@ -480,26 +470,6 @@ def check_and_perform_login():
                 return True
             except:
                 log("Need to perform login")
-            
-            # Save HTML content for debugging BEFORE attempting login
-            try:
-                html_path = f"debug_login_page_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-                page_html = page.content()
-                with open(html_path, 'w', encoding='utf-8') as f:
-                    f.write(page_html)
-                log(f"Login page HTML saved to: {html_path}")
-                
-                # Check for common blocking indicators in HTML
-                page_text = page_html.lower()
-                if any(indicator in page_text for indicator in ['cloudflare', 'captcha', 'access denied', 'blocked', 'checking your browser']):
-                    log("⚠️ WARNING: Page may be showing a blocking/captcha page")
-                    log(f"Page title: {page_title}")
-                    if 'cloudflare' in page_text:
-                        log("Detected Cloudflare challenge page")
-                    return False
-                    
-            except Exception as html_err:
-                log(f"Could not save HTML: {html_err}")
                 
             # Check if we got blocked (403 error page)
             if "403" in page_title or "blocked" in page.content().lower():
@@ -773,9 +743,8 @@ def check_and_perform_login():
                         
                         # Clear login flag - bot is now ready to accept files
                         try:
-                            import main
-                            with main.bot_is_logging_in_lock:
-                                main.bot_is_logging_in = False
+                            from main import bot_is_logging_in
+                            bot_is_logging_in.clear()
                             log(f"[{threading.current_thread().name}] 🔓 Login complete - file uploads now allowed")
                         except Exception as flag_err:
                             log(f"Could not clear login flag: {flag_err}")
@@ -789,9 +758,8 @@ def check_and_perform_login():
                     
                     # Clear login flag - bot is now ready to accept files
                     try:
-                        import main
-                        with main.bot_is_logging_in_lock:
-                            main.bot_is_logging_in = False
+                        from main import bot_is_logging_in
+                        bot_is_logging_in.clear()
                         log(f"[{threading.current_thread().name}] 🔓 Login complete - file uploads now allowed")
                     except Exception as flag_err:
                         log(f"Could not clear login flag: {flag_err}")
@@ -832,9 +800,8 @@ def check_and_perform_login():
                             
                             # Clear login flag - bot is now ready to accept files
                             try:
-                                import main
-                                with main.bot_is_logging_in_lock:
-                                    main.bot_is_logging_in = False
+                                from main import bot_is_logging_in
+                                bot_is_logging_in.clear()
                                 log(f"[{threading.current_thread().name}] 🔓 Login complete - file uploads now allowed")
                             except Exception as flag_err:
                                 log(f"Could not clear login flag: {flag_err}")
@@ -849,9 +816,8 @@ def check_and_perform_login():
                 
                 # Clear login flag - bot is now ready to accept files
                 try:
-                    import main
-                    with main.bot_is_logging_in_lock:
-                        main.bot_is_logging_in = False
+                    from main import bot_is_logging_in
+                    bot_is_logging_in.clear()
                     log(f"[{threading.current_thread().name}] 🔓 Login complete - file uploads now allowed")
                 except Exception as flag_err:
                     log(f"Could not clear login flag: {flag_err}")
@@ -867,9 +833,8 @@ def check_and_perform_login():
             
             # Clear login flag on failure - allow retries
             try:
-                import main
-                with main.bot_is_logging_in_lock:
-                    main.bot_is_logging_in = False
+                from main import bot_is_logging_in
+                bot_is_logging_in.clear()
                 log(f"[{threading.current_thread().name}] ⚠️ Login failed - cleared flag for retry")
             except Exception as flag_err:
                 log(f"Could not clear login flag: {flag_err}")
