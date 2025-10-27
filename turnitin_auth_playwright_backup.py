@@ -1,0 +1,956 @@
+import os
+import time
+import random
+import json
+import requests
+import threading
+from datetime import datetime
+from dotenv import load_dotenv
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+
+# Stealth mode to bypass bot detection
+try:
+    from playwright_stealth import stealth_sync
+    STEALTH_AVAILABLE = True
+except ImportError:
+    STEALTH_AVAILABLE = False
+    print("⚠️ playwright-stealth not installed. Install with: pip install playwright-stealth")
+    print("   Bot detection bypass will be limited.")
+
+# Load environment variables
+load_dotenv()
+TURNITIN_EMAIL = os.getenv("TURNITIN_EMAIL")
+TURNITIN_PASSWORD = os.getenv("TURNITIN_PASSWORD")
+
+# Webshare API configuration
+WEBSHARE_API_TOKEN = os.getenv("WEBSHARE_API_TOKEN", "")
+
+# Manual proxy configuration
+MANUAL_PROXY = os.getenv("MANUAL_PROXY", "")
+
+# Thread-local storage for browser sessions (each worker thread gets its own session)
+thread_local = threading.local()
+
+# Thread-safety lock for Playwright initialization
+playwright_lock = threading.Lock()
+
+# Thread-safety lock for submission search (prevent concurrent inbox page reloads)
+submission_search_lock = threading.Lock()
+
+# Thread-safety lock for login process (only one thread logs in at a time)
+login_lock = threading.Lock()
+
+# Thread-safety lock for entire session initialization (prevents concurrent worker setup)
+session_init_lock = threading.Lock()
+
+# Rotating user agents for better success rate
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0'
+]
+
+def log(message: str):
+    """Log a message with a timestamp to the terminal."""
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
+
+def get_thread_browser_session():
+    """Get or initialize thread-local browser session storage"""
+    if not hasattr(thread_local, 'browser_session'):
+        thread_local.browser_session = {
+            'playwright': None,
+            'browser': None,
+            'context': None,
+            'page': None,
+            'logged_in': False,
+            'last_activity': None,
+            'current_proxy': None
+        }
+    return thread_local.browser_session
+
+def random_wait(min_seconds=2, max_seconds=4):
+    """Wait for a random amount of time to appear more human-like"""
+    wait_time = random.uniform(min_seconds, max_seconds)
+    time.sleep(wait_time)
+
+def get_webshare_proxies():
+    """Get a list of working proxies from Webshare API"""
+    if not WEBSHARE_API_TOKEN:
+        log("No Webshare API token configured, using direct connection")
+        return []
+    
+    try:
+        headers = {"Authorization": f"Token {WEBSHARE_API_TOKEN}"}
+        
+        response = requests.get(
+            "https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page=1&page_size=20",
+            headers=headers,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            proxy_data = response.json()
+            proxies = proxy_data.get('results', [])
+            
+            if proxies:
+                # Filter for valid proxies, prioritize US proxies
+                us_proxies = [p for p in proxies if p.get('valid') and p.get('country_code') == 'US']
+                other_proxies = [p for p in proxies if p.get('valid') and p.get('country_code') != 'US']
+                
+                # Return US proxies first, then others
+                valid_proxies = us_proxies + other_proxies
+                log(f"Retrieved {len(valid_proxies)} valid proxies from Webshare ({len(us_proxies)} US, {len(other_proxies)} others)")
+                return valid_proxies
+            else:
+                log("No proxies returned from Webshare API")
+        else:
+            log(f"Webshare API error: {response.status_code} - {response.text}")
+    
+    except Exception as e:
+        log(f"Error fetching Webshare proxies: {e}")
+    
+    return []
+
+def test_proxy_connection(proxy_info, session=None):
+    """Test if a proxy is working properly with multiple test methods"""
+    if session is None:
+        session = requests.Session()
+    
+    proxy_config = {
+        'http': f"http://{proxy_info['username']}:{proxy_info['password']}@{proxy_info['proxy_address']}:{proxy_info['port']}",
+        'https': f"http://{proxy_info['username']}:{proxy_info['password']}@{proxy_info['proxy_address']}:{proxy_info['port']}"
+    }
+    
+    # Test URLs in order of preference
+    test_urls = [
+        'http://icanhazip.com',
+        'https://api.ipify.org',
+        'http://checkip.amazonaws.com'
+    ]
+    
+    for test_url in test_urls:
+        try:
+            response = session.get(
+                test_url, 
+                proxies=proxy_config, 
+                timeout=15,
+                headers={'User-Agent': random.choice(USER_AGENTS)}
+            )
+            
+            if response.status_code == 200:
+                ip_response = response.text.strip()
+                if ip_response and len(ip_response) < 50:  # Basic IP validation
+                    log(f"Proxy test successful via {test_url}: External IP = {ip_response}")
+                    return True
+        except Exception as e:
+            log(f"Proxy test failed for {test_url}: {e}")
+            continue
+    
+    return False
+
+def get_working_proxy():
+    """Get a working proxy with rotation and testing"""
+    
+    # First, check for manual proxy configuration
+    if MANUAL_PROXY:
+        try:
+            # Parse manual proxy format: host:port:username:password
+            parts = MANUAL_PROXY.split(':')
+            if len(parts) == 4:
+                manual_proxy_info = {
+                    'proxy_address': parts[0],
+                    'port': parts[1],
+                    'username': parts[2],
+                    'password': parts[3],
+                    'country_code': 'Manual'
+                }
+                log(f"Using manual proxy: {manual_proxy_info['proxy_address']}:{manual_proxy_info['port']}")
+                return manual_proxy_info
+            else:
+                log(f"Invalid manual proxy format: {MANUAL_PROXY} (expected host:port:username:password)")
+        except Exception as e:
+            log(f"Error parsing manual proxy: {e}")
+    
+    # Fall back to Webshare proxies
+    proxies = get_webshare_proxies()
+    
+    if not proxies:
+        log("No proxies available, using direct connection")
+        return None
+    
+    # Shuffle proxies for rotation
+    random.shuffle(proxies)
+    
+    # Test up to 5 proxies to find a working one
+    for i, proxy in enumerate(proxies[:5]):
+        log(f"Testing proxy {i+1}/5: {proxy['proxy_address']}:{proxy['port']} ({proxy.get('country_code', 'Unknown')})")
+        
+        if test_proxy_connection(proxy):
+            log(f"Selected working proxy: {proxy['proxy_address']}:{proxy['port']} ({proxy.get('country_code', 'Unknown')})")
+            return proxy
+        else:
+            log(f"Proxy failed test: {proxy['proxy_address']}:{proxy['port']}")
+    
+    log("No working proxies found after testing 5 proxies, using direct connection")
+    return None
+
+def test_browser_proxy(page, proxy_info):
+    """Test proxy functionality within the browser context"""
+    test_urls = [
+        'https://api64.ipify.org?format=json',
+        'https://icanhazip.com'
+    ]
+    
+    for test_url in test_urls:
+        try:
+            log(f"Testing browser proxy with {test_url}")
+            response = page.goto(test_url, timeout=20000, wait_until='networkidle')
+            
+            if response and response.ok:
+                try:
+                    content = page.content()
+                    # Check if we got a reasonable response
+                    if len(content) > 50 and len(content) < 5000:
+                        log(f"Browser proxy test successful via {test_url}")
+                        return True
+                except Exception as content_error:
+                    log(f"Could not read content from {test_url}: {content_error}")
+                    
+        except Exception as e:
+            log(f"Browser proxy test failed for {test_url}: {e}")
+            continue
+    
+    return False
+
+def get_or_create_browser_session():
+    """Get existing browser session or create new one with improved proxy handling"""
+    # Get thread-local browser session
+    browser_session = get_thread_browser_session()
+    
+    # Check if session exists and is valid
+    if (browser_session['browser'] and 
+        browser_session['context'] and 
+        browser_session['page'] and
+        browser_session['logged_in']):
+        
+        try:
+            # Test if session is still alive
+            current_url = browser_session['page'].url
+            
+            # Check session age - refresh if older than 1 hour
+            if browser_session['last_activity']:
+                session_age = datetime.now() - browser_session['last_activity']
+                session_age_minutes = session_age.total_seconds() / 60
+                
+                if session_age_minutes > 60:  # 1 hour
+                    log(f"[{threading.current_thread().name}] Session is {session_age_minutes:.1f} minutes old (>60 min), refreshing login...")
+                    cleanup_browser_session()
+                    # Will create new session below
+                else:
+                    browser_session['last_activity'] = datetime.now()
+                    log(f"[{threading.current_thread().name}] Reusing existing browser session ({session_age_minutes:.1f} min old) - Current URL: {current_url}")
+                    return browser_session['page']
+            else:
+                # No timestamp, update it and continue
+                browser_session['last_activity'] = datetime.now()
+                log(f"[{threading.current_thread().name}] Reusing existing browser session - Current URL: {current_url}")
+                return browser_session['page']
+        except Exception as e:
+            log(f"[{threading.current_thread().name}] Existing session invalid: {e}, creating new session")
+            cleanup_browser_session()
+    
+    # CRITICAL: Acquire session initialization lock
+    # This ensures only ONE worker initializes browser at a time
+    # Worker 1 must complete entire setup (browser + login + navigate) before Worker 2 starts
+    log(f"[{threading.current_thread().name}] Waiting for session initialization lock...")
+    with session_init_lock:
+        log(f"[{threading.current_thread().name}] ✅ Acquired session initialization lock - starting browser setup...")
+        
+        try:
+            # Create new session
+            log(f"[{threading.current_thread().name}] Creating new browser session...")
+            
+            try:
+                # Start Playwright with thread-safety lock
+                with playwright_lock:
+                    browser_session['playwright'] = sync_playwright().start()
+                
+                # Get a working proxy with testing and rotation
+                proxy_info = get_working_proxy()
+                
+                # Prepare browser launch options
+                launch_options = {
+                    'headless': True,
+                    'args': [
+                        '--no-sandbox',
+                        '--disable-dev-shm-usage',
+                        '--disable-gpu',
+                        '--disable-extensions',
+                        '--no-first-run',
+                        '--disable-default-apps',
+                        '--disable-web-security',
+                        '--disable-features=VizDisplayCompositor'
+                    ]
+                }
+                
+                # Add Webshare proxy configuration if available
+                if proxy_info:
+                    proxy_config = {
+                        "server": f"http://{proxy_info['proxy_address']}:{proxy_info['port']}",
+                        "username": proxy_info['username'],
+                        "password": proxy_info['password']
+                    }
+                    launch_options['proxy'] = proxy_config
+                    browser_session['current_proxy'] = proxy_info
+                    log(f"Using tested proxy: {proxy_info['proxy_address']}:{proxy_info['port']}")
+                else:
+                    log("No proxy configured, using direct connection")
+                
+                # Launch browser with proxy support
+                browser_session['browser'] = browser_session['playwright'].chromium.launch(**launch_options)
+                
+                # Create context with enhanced anti-detection
+                context_options = {
+                    'viewport': {'width': 1920, 'height': 1080},
+                    'user_agent': random.choice(USER_AGENTS),
+                    'extra_http_headers': {
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1',
+                        'Sec-Fetch-Site': 'none',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-User': '?1',
+                        'Sec-Fetch-Dest': 'document',
+                        'Cache-Control': 'max-age=0'
+                    },
+                    'java_script_enabled': True,
+                    'accept_downloads': True,
+                    'ignore_https_errors': True
+                }
+                
+                # Load cookies if available (but validate them first)
+                cookies_path = "cookies.json"
+                should_load_cookies = False
+                
+                if os.path.exists(cookies_path):
+                    try:
+                        # Validate cookies have session tokens
+                        import json
+                        with open(cookies_path, 'r', encoding='utf-8') as f:
+                            cookie_data = json.load(f)
+                            cookies = cookie_data.get('cookies', [])
+                            
+                            # Check if we have important session cookies
+                            important_cookies = ['session-id', 't', 'apt.sid', 'cwr_s']
+                            has_important = any(c['name'] in important_cookies for c in cookies)
+                            
+                            # Check if cookies are not expired
+                            current_time = time.time()
+                            valid_cookies = [c for c in cookies if c.get('expires', -1) > current_time or c.get('expires', -1) == -1]
+                            
+                            if has_important and len(valid_cookies) > 0:
+                                context_options['storage_state'] = cookies_path
+                                should_load_cookies = True
+                                log(f"Loading saved cookies: {len(valid_cookies)}/{len(cookies)} valid")
+                            else:
+                                log(f"Cookies expired or missing session info (valid: {len(valid_cookies)}/{len(cookies)})")
+                    except Exception as e:
+                        log(f"Could not validate cookies: {e}, creating fresh session")
+                else:
+                    log("No saved cookies found, creating fresh session")
+                
+                browser_session['context'] = browser_session['browser'].new_context(**context_options)
+                browser_session['page'] = browser_session['context'].new_page()
+                
+                # Apply stealth mode to bypass bot detection (AWS WAF, Cloudflare, etc.)
+                if STEALTH_AVAILABLE:
+                    try:
+                        stealth_sync(browser_session['page'])
+                        log("✓ Stealth mode applied to page")
+                    except Exception as e:
+                        log(f"⚠️ Could not apply stealth mode: {e}")
+                else:
+                    log("⚠️ Stealth mode not available - install playwright-stealth")
+                
+                # Test proxy connection in browser if configured
+                if proxy_info:
+                    if test_browser_proxy(browser_session['page'], proxy_info):
+                        log("Browser proxy verification successful")
+                    else:
+                        log("Browser proxy verification failed, but continuing...")
+                
+                # Check if we need to login
+                if check_and_perform_login():
+                    browser_session['logged_in'] = True
+                    browser_session['last_activity'] = datetime.now()
+                    log(f"[{threading.current_thread().name}] ✅ Browser session created and logged in successfully")
+                    
+                    # Double-check page is not None
+                    if browser_session['page'] is None:
+                        raise Exception("Page is None after login")
+                    
+                    log(f"[{threading.current_thread().name}] ✅ Session initialization complete - releasing lock")
+                    return browser_session['page']
+                else:
+                    raise Exception("Login failed")
+                    
+            except Exception as e:
+                log(f"[{threading.current_thread().name}] ❌ Error creating browser session: {e}")
+                cleanup_browser_session()
+                raise
+                
+        finally:
+            # Lock will be released automatically when exiting 'with' block
+            log(f"[{threading.current_thread().name}] Released session initialization lock")
+
+def check_and_perform_login():
+    """Check if login is needed and perform if necessary"""
+    browser_session = get_thread_browser_session()
+    page = browser_session['page']
+    
+    # Notify main.py that login is starting - block all file uploads
+    try:
+        from main import bot_is_logging_in
+        bot_is_logging_in.set()  # Set flag - bot is now logging in
+        log(f"[{threading.current_thread().name}] 🔒 Login started - file uploads blocked")
+    except Exception as flag_err:
+        log(f"Could not set login flag: {flag_err}")
+    
+    # Acquire login lock - only one thread logs in at a time
+    log(f"[{threading.current_thread().name}] Waiting for login lock...")
+    with login_lock:
+        log(f"[{threading.current_thread().name}] Acquired login lock, starting login process...")
+        
+        try:
+            # Go to Turnitin login page with longer timeout
+            log("Navigating to Turnitin login page...")
+            page.goto("https://www.turnitin.com/login_page.asp?lang=en_us", timeout=90000, wait_until='load')
+            log("Page navigation complete, waiting for full page load...")
+            
+            # Wait for DOM to be ready
+            log("Waiting for DOM to be ready...")
+            page.wait_for_load_state('domcontentloaded', timeout=60000)
+            
+            # Wait for all network requests to complete
+            log("Waiting for network to be idle...")
+            page.wait_for_load_state('networkidle', timeout=60000)
+            
+            # Wait for document to be fully ready
+            log("Waiting for document.readyState to be complete...")
+            page.wait_for_function(
+                '() => document.readyState === "complete"',
+                timeout=60000
+            )
+            
+            # Wait for jQuery to be ready (if present)
+            try:
+                page.wait_for_function(
+                    '() => typeof jQuery !== "undefined" ? jQuery.active === 0 : true',
+                    timeout=30000
+                )
+                log("jQuery AJAX requests completed")
+            except:
+                log("jQuery not present or no AJAX requests")
+            
+            # Extra wait for dynamic content rendering
+            random_wait(2, 3)
+            
+            # Check current URL and page title for debugging
+            current_url = page.url
+            page_title = page.title()
+            log(f"Login page fully loaded - URL: {current_url}, Title: {page_title}")
+            
+            # Check if we're already logged in
+            try:
+                page.wait_for_selector('a.sn_quick_submit', timeout=10000)
+                log("Already logged in - Quick Submit found")
+                save_cookies()
+                
+                # Clear login flag - bot is ready to accept files
+                try:
+                    from main import bot_is_logging_in
+                    bot_is_logging_in.clear()
+                    log(f"[{threading.current_thread().name}] 🔓 Already logged in - file uploads allowed")
+                except Exception as flag_err:
+                    log(f"Could not clear login flag: {flag_err}")
+                
+                return True
+            except:
+                log("Need to perform login")
+                
+            # Check if we got blocked (403 error page)
+            if "403" in page_title or "blocked" in page.content().lower():
+                log("Detected blocking page - may need different proxy")
+                return False
+                
+            # Try multiple email selectors with increased timeout
+            email_selectors = [
+                'input[name="email"]',
+                'input[type="email"]',
+                'input[id="email"]',
+                '#email',
+                '[placeholder*="email" i]'
+            ]
+            
+            email_filled = False
+            for selector in email_selectors:
+                try:
+                    log(f"Trying email selector: {selector}")
+                    # Wait for email field to be visible
+                    page.wait_for_selector(selector, timeout=20000)
+                    log(f"Email field element found")
+                    
+                    # Wait for element to be enabled and interactive
+                    page.wait_for_function(
+                        f'''
+                        () => {{
+                            const elem = document.querySelector('{selector}');
+                            return elem && 
+                                   !elem.disabled && 
+                                   getComputedStyle(elem).visibility !== 'hidden' &&
+                                   getComputedStyle(elem).display !== 'none';
+                        }}
+                        ''',
+                        timeout=15000
+                    )
+                    log(f"Email field is now ready and interactive")
+                    
+                    # Additional wait for JS rendering
+                    random_wait(0.5, 1)
+                    
+                    page.fill(selector, TURNITIN_EMAIL)
+                    log(f"Email filled successfully with selector: {selector}")
+                    email_filled = True
+                    break
+                except Exception as selector_error:
+                    log(f"Email selector {selector} failed: {selector_error}")
+                    continue
+            
+            if not email_filled:
+                log("Could not find email field with any selector")
+                # Take screenshot for debugging
+                try:
+                    page.screenshot(path="debug_login_no_email.png")
+                    log("Debug screenshot saved: debug_login_no_email.png")
+                except:
+                    pass
+                return False
+            
+            random_wait(2, 3)
+            
+            # Fill password with multiple selectors
+            password_selectors = [
+                'input[name="user_password"]',  # Updated: actual name from current HTML
+                '#password',                   # ID selector (most reliable)
+                'input[type="password"]',      # Type selector (fallback)
+                'input[name="password"]',      # Old name selector (fallback)
+                '[placeholder*="password" i]'  # Placeholder selector (fallback)
+            ]
+            
+            password_filled = False
+            for selector in password_selectors:
+                try:
+                    log(f"Trying password selector: {selector}")
+                    # Wait for password field to be visible and interactive
+                    page.wait_for_selector(selector, timeout=20000)
+                    log(f"Password field found, checking if it's interactive...")
+                    
+                    # Wait for element to be enabled
+                    page.wait_for_function(
+                        f'''
+                        () => {{
+                            const elem = document.querySelector('{selector}');
+                            return elem && 
+                                   !elem.disabled && 
+                                   getComputedStyle(elem).visibility !== 'hidden' &&
+                                   getComputedStyle(elem).display !== 'none';
+                        }}
+                        ''',
+                        timeout=15000
+                    )
+                    log(f"Password field is now ready and interactive")
+                    
+                    random_wait(0.5, 1)
+                    page.fill(selector, TURNITIN_PASSWORD)
+                    log(f"Password filled successfully with selector: {selector}")
+                    password_filled = True
+                    break
+                except Exception as selector_error:
+                    log(f"Password selector {selector} failed: {selector_error}")
+                    continue
+            
+            if not password_filled:
+                log("Could not find password field")
+                return False
+            
+            random_wait(2, 3)
+            
+            # Click login button with multiple selectors
+            login_selectors = [
+                'input[name="submit"][value="Log in"]',  # Most specific from current HTML
+                'input[type="submit"]',                  # Type selector (reliable)
+                'input[value="Log in"]',                 # Value selector (reliable)
+                'button[type="submit"]',                 # Button fallback
+                'button:has-text("Log in")',            # Text-based fallback
+                'input[value*="Log" i]'                  # Partial match fallback
+            ]
+            
+            login_clicked = False
+            for selector in login_selectors:
+                try:
+                    log(f"Trying login button selector: {selector}")
+                    page.click(selector)
+                    log(f"Login button clicked successfully with selector: {selector}")
+                    login_clicked = True
+                    break
+                except Exception as selector_error:
+                    log(f"Login selector {selector} failed: {selector_error}")
+                    continue
+            
+            if not login_clicked:
+                log("Could not find or click login button")
+                return False
+            
+            # Wait for login to complete and page to fully load
+            log("Login button clicked, waiting for page to redirect and load...")
+            
+            # Wait for initial navigation to start
+            try:
+                page.wait_for_load_state('load', timeout=60000)
+                log("Page load state reached")
+            except:
+                log("Page load timeout, checking current state...")
+            
+            # Wait for DOM to be ready
+            try:
+                page.wait_for_load_state('domcontentloaded', timeout=60000)
+                log("DOM content loaded")
+            except:
+                pass
+            
+            # Wait for network to be idle (all AJAX requests done)
+            try:
+                page.wait_for_load_state('networkidle', timeout=60000)
+                log("Network is idle - all requests completed")
+            except:
+                log("Network timeout, continuing anyway...")
+            
+            # Wait for document to be fully ready
+            try:
+                page.wait_for_function(
+                    '() => document.readyState === "complete"',
+                    timeout=60000
+                )
+                log("Document is fully loaded")
+            except:
+                log("Document load timeout")
+            
+            # Wait for jQuery AJAX to complete if present
+            try:
+                page.wait_for_function(
+                    '() => typeof jQuery !== "undefined" ? jQuery.active === 0 : true',
+                    timeout=30000
+                )
+                log("jQuery AJAX requests completed")
+            except:
+                pass
+            
+            # Extra wait for rendering
+            random_wait(2, 3)
+            
+            page.wait_for_timeout(1000)  # Final buffer
+            
+            # Debug: Check what page we're on after login
+            try:
+                after_login_url = page.url
+                after_login_title = page.title()
+                log(f"After login - URL: {after_login_url}, Title: {after_login_title}")
+                
+                # Save HTML content for debugging (works on headless servers)
+                try:
+                    html_path = f"debug_after_login_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+                    page_html = page.content()
+                    with open(html_path, 'w', encoding='utf-8') as f:
+                        f.write(page_html)
+                    log(f"Debug HTML saved: {html_path}")
+                except Exception as html_err:
+                    log(f"Could not save HTML: {html_err}")
+                
+                # Check if still on login page - most reliable indicator
+                if "login_page.asp" in after_login_url:
+                    log("⚠️ Still on login page - credentials may be incorrect")
+                    # Extract any error messages from the page
+                    try:
+                        error_selectors = [
+                            '.error-message',
+                            '.alert',
+                            '[class*="error"]',
+                            '[id*="error"]'
+                        ]
+                        for selector in error_selectors:
+                            error_elements = page.query_selector_all(selector)
+                            for elem in error_elements:
+                                error_text = elem.inner_text().strip()
+                                if error_text:
+                                    log(f"Error message found: {error_text}")
+                    except:
+                        pass
+                        
+            except Exception as debug_err:
+                log(f"Debug check error: {debug_err}")
+            
+            # Verify login success - wait for Quick Submit link to appear
+            log("Waiting for page to stabilize after login...")
+            page.wait_for_timeout(2000)  # Give page time to fully render
+            
+            # First, verify we're logged in by checking for "Now viewing:" element
+            log("Verifying successful login by checking for 'Now viewing:' breadcrumb...")
+            try:
+                # Look for the breadcrumb with "Now viewing:" text
+                now_viewing_element = page.query_selector('h2:has-text("Now viewing:")')
+                if now_viewing_element:
+                    log("✅ Found 'Now viewing:' breadcrumb - Login successful!")
+                else:
+                    # Try alternative selector
+                    bread_crumbs = page.query_selector('#bread_crumbs h2')
+                    if bread_crumbs:
+                        h2_text = bread_crumbs.inner_text()
+                        if "Now viewing" in h2_text:
+                            log("✅ Found 'Now viewing:' in breadcrumbs - Login successful!")
+                        else:
+                            log(f"⚠️ Breadcrumbs found but wrong text: {h2_text}")
+                    else:
+                        log("⚠️ Could not find 'Now viewing:' breadcrumb")
+            except Exception as breadcrumb_err:
+                log(f"Breadcrumb check error: {breadcrumb_err}")
+            
+            # Now look for Quick Submit link
+            try:
+                # Wait for Quick Submit link to appear on the page
+                log("Looking for Quick Submit link: .sn_quick_submit")
+                page.wait_for_selector('.sn_quick_submit', timeout=30000)
+                log("✅ Quick Submit link found!")
+                
+                # Give page a moment to fully load
+                page.wait_for_load_state('networkidle', timeout=30000)
+                page.wait_for_timeout(1000)
+                
+                # Click the Quick Submit link
+                try:
+                    quick_submit_element = page.query_selector('.sn_quick_submit')
+                    if quick_submit_element:
+                        log("Clicking on Quick Submit link...")
+                        quick_submit_element.click()
+                        log("✅ Clicked Quick Submit - waiting for page to load...")
+                        
+                        # Wait for navigation to complete
+                        page.wait_for_load_state('networkidle', timeout=30000)
+                        log("✅ Quick Submit page loaded successfully!")
+                        save_cookies()
+                        
+                        # Clear login flag - bot is now ready to accept files
+                        try:
+                            from main import bot_is_logging_in
+                            bot_is_logging_in.clear()
+                            log(f"[{threading.current_thread().name}] 🔓 Login complete - file uploads now allowed")
+                        except Exception as flag_err:
+                            log(f"Could not clear login flag: {flag_err}")
+                        
+                        return True
+                except Exception as click_err:
+                    log(f"Error clicking Quick Submit: {click_err}")
+                    # If click failed but element exists, we're still logged in
+                    log("Quick Submit element exists but click failed - trying alternative...")
+                    save_cookies()
+                    
+                    # Clear login flag - bot is now ready to accept files
+                    try:
+                        from main import bot_is_logging_in
+                        bot_is_logging_in.clear()
+                        log(f"[{threading.current_thread().name}] 🔓 Login complete - file uploads now allowed")
+                    except Exception as flag_err:
+                        log(f"Could not clear login flag: {flag_err}")
+                    
+                    return True
+                    
+            except PlaywrightTimeout:
+                log("⚠️ Quick Submit link not found immediately, checking if still logged in...")
+                
+                # Check if we're still on login page
+                current_url = page.url
+                if "login_page.asp" in current_url:
+                    log("❌ Still on login page - login failed")
+                    return False
+                
+                # We're not on login page, so login likely succeeded
+                log("✅ Login successful (not on login page), but Quick Submit link not immediately visible")
+                log(f"Current URL: {current_url}")
+                
+                # Try to find and click Quick Submit with alternative selectors
+                quick_submit_selectors = [
+                    ('a[class="sn_quick_submit"]', 'CSS class selector'),
+                    ('a[class*="sn_quick_submit"]', 'CSS class partial match'),
+                    ('a:has-text("Quick Submit")', 'Text-based selector'),
+                ]
+                
+                for selector, description in quick_submit_selectors:
+                    try:
+                        log(f"Trying {description}: {selector}")
+                        element = page.query_selector(selector)
+                        if element:
+                            log(f"Found Quick Submit with {description}, clicking...")
+                            page.wait_for_load_state('networkidle', timeout=30000)
+                            element.click()
+                            page.wait_for_load_state('networkidle', timeout=30000)
+                            log("✅ Quick Submit clicked successfully")
+                            save_cookies()
+                            
+                            # Clear login flag - bot is now ready to accept files
+                            try:
+                                from main import bot_is_logging_in
+                                bot_is_logging_in.clear()
+                                log(f"[{threading.current_thread().name}] 🔓 Login complete - file uploads now allowed")
+                            except Exception as flag_err:
+                                log(f"Could not clear login flag: {flag_err}")
+                            
+                            return True
+                    except Exception as e:
+                        log(f"{description} failed: {e}")
+                        continue
+                
+                log("Could not find Quick Submit link with any selector, but login appears successful")
+                save_cookies()
+                
+                # Clear login flag - bot is now ready to accept files
+                try:
+                    from main import bot_is_logging_in
+                    bot_is_logging_in.clear()
+                    log(f"[{threading.current_thread().name}] 🔓 Login complete - file uploads now allowed")
+                except Exception as flag_err:
+                    log(f"Could not clear login flag: {flag_err}")
+                
+                return True
+                
+            except Exception as e:
+                log(f"Login verification error: {e}")
+                return False
+                
+        except Exception as e:
+            log(f"Login process failed: {e}")
+            
+            # Clear login flag on failure - allow retries
+            try:
+                from main import bot_is_logging_in
+                bot_is_logging_in.clear()
+                log(f"[{threading.current_thread().name}] ⚠️ Login failed - cleared flag for retry")
+            except Exception as flag_err:
+                log(f"Could not clear login flag: {flag_err}")
+            
+            return False
+
+def navigate_to_quick_submit():
+    """Navigate to Quick Submit page using persistent session"""
+    browser_session = get_thread_browser_session()
+    page = browser_session['page']
+    
+    try:
+        # Try multiple selectors for Quick Submit
+        quick_submit_selectors = [
+            'a.sn_quick_submit',                    # Current working selector
+            'a[href*="quicksubmit"]',              # Href-based selector
+            'a:has-text("Quick Submit")',          # Text-based selector
+            '[class="sn_quick_submit"]'            # Class-based fallback
+        ]
+
+        quick_submit_clicked = False
+        for selector in quick_submit_selectors:
+            try:
+                log(f"Trying Quick Submit selector: {selector}")
+                page.wait_for_selector(selector, timeout=20000)
+                page.click(selector)
+                log(f"Successfully navigated to Quick Submit with selector: {selector}")
+                quick_submit_clicked = True
+                break
+            except Exception as selector_error:
+                log(f"Quick Submit selector {selector} failed: {selector_error}")
+                continue
+
+        if not quick_submit_clicked:
+            raise Exception("Could not find Quick Submit link with any selector")
+
+        random_wait(2, 3)
+        return page
+    except Exception as e:
+        log(f"Error navigating to Quick Submit: {e}")
+        raise
+
+def save_cookies():
+    """Save cookies for future sessions (clean up expired cookies)"""
+    try:
+        browser_session = get_thread_browser_session()
+        if browser_session['context']:
+            import json as json_module
+            
+            # Get storage state
+            storage_path = "cookies.json"
+            browser_session['context'].storage_state(path=storage_path)
+            
+            # Clean up expired cookies
+            try:
+                current_time = time.time()
+                with open(storage_path, 'r', encoding='utf-8') as f:
+                    storage_data = json_module.load(f)
+                
+                # Filter out expired cookies
+                if 'cookies' in storage_data:
+                    original_count = len(storage_data['cookies'])
+                    storage_data['cookies'] = [
+                        c for c in storage_data['cookies'] 
+                        if c.get('expires', -1) > current_time or c.get('expires', -1) == -1
+                    ]
+                    new_count = len(storage_data['cookies'])
+                    
+                    # Save cleaned cookies back
+                    with open(storage_path, 'w', encoding='utf-8') as f:
+                        json_module.dump(storage_data, f)
+                    
+                    log(f"Cookies saved successfully ({original_count} -> {new_count} after cleanup)")
+                else:
+                    log("Cookies saved successfully")
+            except Exception as cleanup_err:
+                log(f"Cookies saved but cleanup warning: {cleanup_err}")
+                
+    except Exception as e:
+        log(f"[{threading.current_thread().name}] Error saving cookies: {e}")
+
+def cleanup_browser_session():
+    """Clean up browser session for current thread"""
+    browser_session = get_thread_browser_session()
+    
+    try:
+        if browser_session['page']:
+            browser_session['page'].close()
+        if browser_session['context']:
+            browser_session['context'].close()
+        if browser_session['browser']:
+            browser_session['browser'].close()
+        if browser_session['playwright']:
+            browser_session['playwright'].stop()
+    except Exception as e:
+        log(f"[{threading.current_thread().name}] Error during cleanup: {e}")
+    
+    # Reset session
+    browser_session['playwright'] = None
+    browser_session['browser'] = None
+    browser_session['context'] = None
+    browser_session['page'] = None
+    browser_session['logged_in'] = False
+    browser_session['last_activity'] = None
+    browser_session['current_proxy'] = None
+
+def get_session_page():
+    """Get the current session page, creating if necessary"""
+    return get_or_create_browser_session()
