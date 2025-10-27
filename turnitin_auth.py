@@ -365,6 +365,16 @@ def get_or_create_browser_session():
                 browser_session['context'] = browser_session['browser'].new_context(**context_options)
                 browser_session['page'] = browser_session['context'].new_page()
                 
+                # Apply stealth mode to bypass bot detection (AWS WAF, Cloudflare, etc.)
+                if STEALTH_AVAILABLE:
+                    try:
+                        stealth_sync(browser_session['page'])
+                        log("✓ Stealth mode applied to page")
+                    except Exception as e:
+                        log(f"⚠️ Could not apply stealth mode: {e}")
+                else:
+                    log("⚠️ Stealth mode not available - install playwright-stealth")
+                
                 # Test proxy connection in browser if configured
                 if proxy_info:
                     if test_browser_proxy(browser_session['page'], proxy_info):
