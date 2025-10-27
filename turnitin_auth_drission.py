@@ -14,6 +14,9 @@ load_dotenv()
 TURNITIN_EMAIL = os.getenv("TURNITIN_EMAIL")
 TURNITIN_PASSWORD = os.getenv("TURNITIN_PASSWORD")
 
+# Chrome/Chromium executable path (for Windows Server without UI)
+CHROME_PATH = os.getenv("CHROME_PATH", "")
+
 # Webshare API configuration
 WEBSHARE_API_TOKEN = os.getenv("WEBSHARE_API_TOKEN", "")
 
@@ -222,6 +225,38 @@ def get_or_create_browser_session():
             
             # Configure ChromiumOptions with anti-detection
             options = ChromiumOptions()
+            
+            # Try to find Chrome executable
+            # Priority 1: CHROME_PATH from .env (for Windows Server)
+            # Priority 2: Standard Chrome locations
+            chrome_paths = []
+            
+            if CHROME_PATH:
+                chrome_paths.append(CHROME_PATH)
+                log(f"🔍 Checking CHROME_PATH from .env: {CHROME_PATH}")
+            
+            # Add standard Chrome locations
+            chrome_paths.extend([
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%PROGRAMFILES(X86)%\Google\Chrome\Application\chrome.exe"),
+                # Add Chromium portable path
+                os.path.expanduser(r"~\.chromium\chrome-win\chrome.exe"),
+            ])
+            
+            chrome_found = False
+            for chrome_path in chrome_paths:
+                if os.path.exists(chrome_path):
+                    options.set_browser_path(chrome_path)
+                    log(f"✅ Found Chrome at: {chrome_path}")
+                    chrome_found = True
+                    break
+            
+            if not chrome_found:
+                log("❌ Chrome not found! Please install Chrome or run: .\\install_chromium.ps1")
+                raise Exception("Chrome executable not found. Run install_chromium.ps1 to install.")
             
             # Anti-detection settings (DrissionPage has built-in anti-detection)
             options.headless(True)

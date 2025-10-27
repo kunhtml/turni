@@ -8,15 +8,14 @@ from datetime import datetime
 from dotenv import load_dotenv
 from DrissionPage import ChromiumPage, ChromiumOptions
 from DrissionPage.errors import ElementNotFoundError, PageDisconnectedError
-from DrissionPage.common import Settings
-
-# Configure DrissionPage to auto-download Chrome
-Settings.singleton_tab_obj = False  # Allow multiple tabs
 
 # Load environment variables
 load_dotenv()
 TURNITIN_EMAIL = os.getenv("TURNITIN_EMAIL")
 TURNITIN_PASSWORD = os.getenv("TURNITIN_PASSWORD")
+
+# Chrome/Chromium executable path (for Windows Server without UI)
+CHROME_PATH = os.getenv("CHROME_PATH", "")
 
 # Webshare API configuration
 WEBSHARE_API_TOKEN = os.getenv("WEBSHARE_API_TOKEN", "")
@@ -44,18 +43,6 @@ USER_AGENTS = [
 def log(message: str):
     """Log a message with a timestamp to the terminal."""
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
-
-def ensure_chrome_downloaded():
-    """Ensure Chrome is downloaded for DrissionPage"""
-    try:
-        from DrissionPage.common import PortFinder
-        # Try to get a port - this will trigger Chrome download if needed
-        port_finder = PortFinder()
-        log("✅ Chrome/Chromium is ready for DrissionPage")
-        return True
-    except Exception as e:
-        log(f"⚠️ Chrome setup: {e}")
-        return True  # Continue anyway, DrissionPage will handle it
 
 def get_thread_browser_session():
     """Get or initialize thread-local browser session storage"""
@@ -233,9 +220,6 @@ def get_or_create_browser_session():
             # Create new session
             log(f"[{threading.current_thread().name}] Creating new browser session...")
             
-            # Ensure Chrome is available
-            ensure_chrome_downloaded()
-            
             # Get proxy configuration
             proxy_info = get_working_proxy()
             
@@ -243,13 +227,24 @@ def get_or_create_browser_session():
             options = ChromiumOptions()
             
             # Try to find Chrome executable
-            chrome_paths = [
+            # Priority 1: CHROME_PATH from .env (for Windows Server)
+            # Priority 2: Standard Chrome locations
+            chrome_paths = []
+            
+            if CHROME_PATH:
+                chrome_paths.append(CHROME_PATH)
+                log(f"🔍 Checking CHROME_PATH from .env: {CHROME_PATH}")
+            
+            # Add standard Chrome locations
+            chrome_paths.extend([
                 r"C:\Program Files\Google\Chrome\Application\chrome.exe",
                 r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
                 os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
                 os.path.expandvars(r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe"),
                 os.path.expandvars(r"%PROGRAMFILES(X86)%\Google\Chrome\Application\chrome.exe"),
-            ]
+                # Add Chromium portable path
+                os.path.expanduser(r"~\.chromium\chrome-win\chrome.exe"),
+            ])
             
             chrome_found = False
             for chrome_path in chrome_paths:
@@ -260,12 +255,8 @@ def get_or_create_browser_session():
                     break
             
             if not chrome_found:
-                log("⚠️ Chrome not found, DrissionPage will auto-download Chrome...")
-                log("📥 This may take a few minutes on first run...")
-                # Don't set browser path - let DrissionPage auto-download
-            
-            # Auto-download Chrome if not found
-            options.auto_port()  # Automatically find available port
+                log("❌ Chrome not found! Please install Chrome or run: .\\install_chromium.ps1")
+                raise Exception("Chrome executable not found. Run install_chromium.ps1 to install.")
             
             # Anti-detection settings (DrissionPage has built-in anti-detection)
             options.headless(True)
