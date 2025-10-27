@@ -32,9 +32,9 @@ ADMIN_TELEGRAM_ID = ADMIN_TELEGRAM_IDS[0] if ADMIN_TELEGRAM_IDS else None  # Kee
 # Initialize standard bot
 bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode='HTML')
 
-# Global login state flag - prevents file uploads during login (thread-safe)
-bot_is_logging_in_lock = threading.Lock()
-bot_is_logging_in = False  # True when logging in, False when ready
+# Global login state flag - prevents file uploads during login
+bot_is_logging_in = threading.Event()  # Set when logging in, clear when ready
+bot_is_logging_in.clear()  # Initially ready (not logging in)
 
 # Processing queue and worker threads
 processing_queue = queue.Queue()
@@ -1540,10 +1540,7 @@ def handle_google_drive_link(message):
     log(f"DEBUG: Google Drive link received from user {user_id}")
     
     # Check if bot is currently logging in - block all uploads
-    with bot_is_logging_in_lock:
-        is_logging_in = bot_is_logging_in
-    
-    if is_logging_in:
+    if bot_is_logging_in.is_set():
         bot.reply_to(
             message,
             "🔄 <b>Bot is cleaning, please wait...</b>\n"
@@ -1614,10 +1611,7 @@ def handle_document(message):
     log(f"DEBUG: Document received from user {user_id}")
     
     # Check if bot is currently logging in - block all uploads
-    with bot_is_logging_in_lock:
-        is_logging_in = bot_is_logging_in
-    
-    if is_logging_in:
+    if bot_is_logging_in.is_set():
         bot.reply_to(
             message,
             "🔄 <b>Bot is cleaning, please wait...</b>\n"
